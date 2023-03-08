@@ -1,7 +1,7 @@
 {
     "domain": "chint_pm",
     "name": "Chint powermeter DxSU-666-h",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "documentation": "https://github.com/lmatula/ha_chint_pm",
     "issue_tracker": "https://github.com/lmatula/ha_chint_pm/issues",
     "requirements": ["pymodbus>=3.1.3"],
