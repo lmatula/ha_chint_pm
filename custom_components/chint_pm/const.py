@@ -13,7 +13,7 @@ CONF_PHASE_MODE = "phase_mode"
 
 DATA_UPDATE_COORDINATORS = "update_coordinators"
 
-UPDATE_INTERVAL = timedelta(seconds=30)
+UPDATE_INTERVAL = timedelta(seconds=15)
 
 PHMODE_3P4W = "3P4W"
 PHMODE_3P3W = "3P3W"

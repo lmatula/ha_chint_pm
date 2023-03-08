@@ -293,6 +293,9 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
+            if not self._client:
+                self._client.connect()
+
             async with async_timeout.timeout(20):
                 return await self.device.update(
                     self._client, self._entry.data[CONF_SLAVE_IDS][0]
