@@ -35,7 +35,7 @@
           }
         },
         "pm_settings": {
-          "Description":"Power metter settings",
+          "description":"Power metter settings",
           "data": {
             "phase_mode": "Set 3 Phase mode"
           }
