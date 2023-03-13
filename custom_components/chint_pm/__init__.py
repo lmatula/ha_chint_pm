@@ -181,7 +181,7 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-            decoder.skip_bytes(2 * 8)
+            # decoder.skip_bytes(2 * 8) # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem?
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -227,9 +227,9 @@ class ChintDxsuDevice:
             elecricity_other = client.read_holding_registers(
                 address=0x2044, count=8, slave=unti_id
             )
-
+            # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = client.read_holding_registers(
-                address=0x401E, count=12, slave=unti_id
+                address=0x4026, count=12, slave=unti_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = client.read_holding_registers(
@@ -266,7 +266,7 @@ class ChintDxsuDevice:
 
 
 class ChintUpdateCoordinator(DataUpdateCoordinator):
-    """A specialised DataUpdateCoordinator for Huawei Solar."""
+    """A specialised DataUpdateCoordinator for chint smart meter."""
 
     def create_client(self, port, host):
         """create one clinet object whole update cordinator"""

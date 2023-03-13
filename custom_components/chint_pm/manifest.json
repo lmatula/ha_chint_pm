@@ -3,7 +3,7 @@
     "name": "Chint powermeter DxSU-666-h",
     "codeowners": ["@lmatula"],
     "config_flow": true,
-    "dependencies": ["usb","pyserial"],
+    "dependencies": ["usb"],
     "documentation": "https://github.com/lmatula/ha_chint_pm",
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/lmatula/ha_chint_pm/issues",
