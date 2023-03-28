@@ -181,7 +181,7 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-            # decoder.skip_bytes(2 * 8) # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem?
+            decoder.skip_bytes(2 * 8) # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem? --> this line is needed! but start address is wrong in documentation
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
