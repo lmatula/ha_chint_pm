@@ -10,6 +10,7 @@ DEFAULT_PASSWORD = ""
 
 CONF_SLAVE_IDS = "slave_ids"
 CONF_PHASE_MODE = "phase_mode"
+CONF_METER_TYPE = "meter_type"
 
 DATA_UPDATE_COORDINATORS = "update_coordinators"
 
@@ -17,3 +18,8 @@ UPDATE_INTERVAL = timedelta(seconds=15)
 
 PHMODE_3P4W = "3P4W"
 PHMODE_3P3W = "3P3W"
+
+
+class MeterTypes:
+    METER_TYPE_H_3P = "1"
+    METER_TYPE_CT_3P = "2"

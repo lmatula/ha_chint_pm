@@ -29,9 +29,11 @@ from pymodbus.constants import Endian
 
 from .const import (
     CONF_SLAVE_IDS,
+    CONF_METER_TYPE,
     DOMAIN,
     DATA_UPDATE_COORDINATORS,
     UPDATE_INTERVAL,
+    MeterTypes,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,11 +58,15 @@ class ChintDxsuDevice:
         self._sensors = []
         self.data = {}
 
-    async def update(self, client, unti_id):
+    async def update(self, client, unit_id):
         """update sensors"""
-        await self.read_values(client, unti_id)
+        match self._entry.data[CONF_METER_TYPE]:
+            case MeterTypes.METER_TYPE_CT_3P:
+                await self.read_values_type_normal(client, unit_id)
+            case _:
+                await self.read_values(client, unit_id)
 
-    async def read_values(self, client, unti_id):
+    async def read_values(self, client, unit_id):
         """read modbus value groups"""
 
         async def read_header(registers):
@@ -181,7 +187,9 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-            decoder.skip_bytes(2 * 8) # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem? --> this line is needed! but start address is wrong in documentation
+            decoder.skip_bytes(
+                2 * 8
+            )  # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem? --> this line is needed! but start address is wrong in documentation
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -214,38 +222,223 @@ class ChintDxsuDevice:
             self.data["q4eq"] = decoder.decode_32bit_float()
 
         if client.connect():
-            header = client.read_holding_registers(address=0x0, count=12, slave=unti_id)
+            header = client.read_holding_registers(address=0x0, count=12, slave=unit_id)
             header_proto = client.read_holding_registers(
-                address=0x2C, count=9, slave=unti_id
+                address=0x2C, count=9, slave=unit_id
             )
             elecricity_power = client.read_holding_registers(
-                address=0x2000, count=0x22, slave=unti_id
+                address=0x2000, count=0x22, slave=unit_id
             )
             elecricity_factor = client.read_holding_registers(
-                address=0x202A, count=8, slave=unti_id
+                address=0x202A, count=8, slave=unit_id
             )
             elecricity_other = client.read_holding_registers(
-                address=0x2044, count=8, slave=unti_id
+                address=0x2044, count=8, slave=unit_id
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = client.read_holding_registers(
-                address=0x4026, count=12, slave=unti_id
+                address=0x4026, count=12, slave=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = client.read_holding_registers(
-                address=0x4032, count=2, slave=unti_id
+                address=0x4032, count=2, slave=unit_id
             )
             # (current) quadrant II reactive total energy
             quadrant_ii = client.read_holding_registers(
-                address=0x403C, count=2, slave=unti_id
+                address=0x403C, count=2, slave=unit_id
             )
             # (current) quadrant III reactive total energy
             quadrant_iii = client.read_holding_registers(
-                address=0x4046, count=2, slave=unti_id
+                address=0x4046, count=2, slave=unit_id
             )
             # (current) quadrant IV reactive total energy
             quadrant_iv = client.read_holding_registers(
-                address=0x4050, count=2, slave=unti_id
+                address=0x4050, count=2, slave=unit_id
+            )
+
+            await asyncio.gather(
+                *[
+                    read_header(header.registers),
+                    read_header_proto(header_proto.registers),
+                    read_elecricity_power(elecricity_power.registers),
+                    read_elecricity_factor(elecricity_factor.registers),
+                    read_elecricity_other(elecricity_other.registers),
+                    read_total(total.registers),
+                    read_quadrant_i(quadrant_i.registers),
+                    read_quadrant_ii(quadrant_ii.registers),
+                    read_quadrant_iii(quadrant_iii.registers),
+                    read_quadrant_iv(quadrant_iv.registers),
+                ],
+                return_exceptions=True,
+            )
+
+    async def read_values_type_normal(self, client, unit_id):
+        """read modbus value groups"""
+
+        async def read_header(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # REV verison
+            self.data["rev"] = decoder.decode_16bit_uint()
+            # UCode Programming password codE
+            self.data["ucode"] = decoder.decode_16bit_uint()
+            # ClrE Electric energy zero clearing CLr.E(1:zero clearing)
+            self.data["clre"] = decoder.decode_16bit_uint()
+            # net Selecting of the connection mode net(0:3P4W,13P3W)
+            self.data["net"] = decoder.decode_16bit_uint()
+            decoder.skip_bytes(2 * 2)
+            # IrAt Current Transformer Ratio
+            self.data["irat"] = decoder.decode_16bit_uint()
+            # UrAt Potential Transformer Ratio(*)
+            self.data["urat"] = decoder.decode_16bit_uint()
+
+        async def read_header_proto(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # Protocol Protocol changing-over
+            self.data["protocol"] = decoder.decode_16bit_uint()
+            # Addr Communication address Addr
+            self.data["baud"] = decoder.decode_16bit_uint()
+            # bAud Communication baud rate bAud
+            self.data["addr"] = decoder.decode_16bit_uint()
+
+        async def read_elecricity_power(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+
+            # Uab Line -line voltage, the unit is V
+            self.data["uab"] = decoder.decode_32bit_float()
+            # Ubc Line -line voltage, the unit is V
+            self.data["ubc"] = decoder.decode_32bit_float()
+            # Uca Line -line voltage, the unit is V
+            self.data["uca"] = decoder.decode_32bit_float()
+
+            # Ua Phase-phase voltage, the unit is V
+            self.data["ua"] = decoder.decode_32bit_float()
+            # Ub Phase-phase voltaget, he unit is V
+            self.data["ub"] = decoder.decode_32bit_float()
+            # Uc Phase-phase voltage, the unit is V
+            self.data["uc"] = decoder.decode_32bit_float()
+
+            # Ia The data of three phase current,the unit is A
+            self.data["ia"] = decoder.decode_32bit_float()
+            # Ib The data of three phase current,the unit is A
+            self.data["ib"] = decoder.decode_32bit_float()
+            # Ic The data of three phase current,the unit is A
+            self.data["ic"] = decoder.decode_32bit_float()
+
+            # Pt Conjunction active power，the unit is W
+            self.data["pt"] = decoder.decode_32bit_float()
+            # Pa A phase active power，the unit is W
+            self.data["pa"] = decoder.decode_32bit_float()
+            # Pb B phase active power，the unit is W (invalid when three phase three wire)
+            self.data["pb"] = decoder.decode_32bit_float()
+            # Pc C phase active power，the unit is W
+            self.data["pc"] = decoder.decode_32bit_float()
+
+            # Qt Conjunction reactive power，the unit is var
+            self.data["qt"] = decoder.decode_32bit_float()
+            # Qa A phase reactive power， the unit is var
+            self.data["qa"] = decoder.decode_32bit_float()
+            # Qb B phase reactive power， the unit is var (invalid when three phase three wire)
+            self.data["qb"] = decoder.decode_32bit_float()
+            # Qc C phase reactive power， the unit is var
+            self.data["qc"] = decoder.decode_32bit_float()
+
+        async def read_elecricity_factor(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # PFt Conjunction power factor
+            self.data["pft"] = decoder.decode_32bit_float()
+            # Pfa A phase power factor (invalid when three phase three wire)
+            self.data["pfa"] = decoder.decode_32bit_float()
+            # PFb B phase power factor (invalid when three phase three wire)
+            self.data["pfb"] = decoder.decode_32bit_float()
+            # PFc C phase power factor (invalid when three phase three wire)
+            self.data["pfc"] = decoder.decode_32bit_float()
+
+        async def read_elecricity_other(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # Freq Frequency
+            self.data["freq"] = decoder.decode_32bit_float()
+
+        async def read_total(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # ImpEp (current)positive active total energy
+            self.data["impep"] = decoder.decode_32bit_float()
+            decoder.skip_bytes(2 * 8)
+            # ExpEp (current)negative active total energy
+            self.data["expep"] = decoder.decode_32bit_float()
+
+        async def read_quadrant_i(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # (current) quadrant I reactive total energy
+            self.data["q1eq"] = decoder.decode_32bit_float()
+
+        async def read_quadrant_ii(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # (current) quadrant II reactive total energy
+            self.data["q2eq"] = decoder.decode_32bit_float()
+
+        async def read_quadrant_iii(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # (current) quadrant III reactive total energy
+            self.data["q3eq"] = decoder.decode_32bit_float()
+
+        async def read_quadrant_iv(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.Big
+            )
+            # (current) quadrant IV reactive total energy
+            self.data["q4eq"] = decoder.decode_32bit_float()
+
+        if client.connect():
+            header = client.read_holding_registers(address=0x0, count=12, slave=unit_id)
+            header_proto = client.read_holding_registers(
+                address=0x2C, count=9, slave=unit_id
+            )
+            elecricity_power = client.read_holding_registers(
+                address=0x2000, count=0x22, slave=unit_id
+            )
+            elecricity_factor = client.read_holding_registers(
+                address=0x202A, count=8, slave=unit_id
+            )
+            elecricity_other = client.read_holding_registers(
+                address=0x2044, count=8, slave=unit_id
+            )
+            # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
+            total = client.read_holding_registers(
+                address=0x1026, count=12, slave=unit_id
+            )
+            # (current) quadrant I reactive total energy
+            quadrant_i = client.read_holding_registers(
+                address=0x1032, count=2, slave=unit_id
+            )
+            # (current) quadrant II reactive total energy
+            quadrant_ii = client.read_holding_registers(
+                address=0x103C, count=2, slave=unit_id
+            )
+            # (current) quadrant III reactive total energy
+            quadrant_iii = client.read_holding_registers(
+                address=0x1046, count=2, slave=unit_id
+            )
+            # (current) quadrant IV reactive total energy
+            quadrant_iv = client.read_holding_registers(
+                address=0x1050, count=2, slave=unit_id
             )
 
             await asyncio.gather(
@@ -314,12 +507,12 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
         request_refresh_debouncer: Debouncer | None = None,
     ) -> None:
         """Create a ChintUpdateCoordinator."""
-        port_host = "".join(filter(str.isalnum, entry.data[CONF_HOST]))
-        port_name = (
-            "".join(filter(str.isalnum, entry.data[CONF_PORT]))
-            if entry.data[CONF_HOST] is None
-            else str(entry.data[CONF_PORT])
-        )
+        if entry.data[CONF_HOST] is None:
+            port_host = ""
+            port_name = str(entry.data[CONF_PORT])
+        else:
+            port_host = "".join(filter(str.isalnum, entry.data[CONF_HOST]))
+            port_name = "".join(filter(str.isalnum, str(entry.data[CONF_PORT])))
 
         super().__init__(
             hass,
@@ -338,11 +531,16 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
     def device_info(self) -> DeviceInfo:
         """Return device information about this pm device."""
         # _LOGGER.debug(self.coordinator.config_entry.data)
+        match self._entry.data[CONF_METER_TYPE]:
+            case MeterTypes.METER_TYPE_CT_3P:
+                meter_type_name = "DTSU-666"
+            case _:
+                meter_type_name = "DTSU-666-H"
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
             name=self._entry.title,
             manufacturer="Chint",
-            model="DTSU-666-H",
+            model=meter_type_name,
         )
 
     def stop(self):

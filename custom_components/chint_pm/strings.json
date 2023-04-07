@@ -39,6 +39,12 @@
           "data": {
             "phase_mode": "Set 3 Phase mode"
           }
+        },
+        "setup_meter_type": {
+          "description":"Meter type select",
+          "data": {
+            "meter_type": "Set 3 Phase mode"
+          }
         }
       },
       "error": {

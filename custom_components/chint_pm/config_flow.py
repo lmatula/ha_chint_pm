@@ -21,6 +21,7 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     CONF_PHASE_MODE,
     CONF_SLAVE_IDS,
+    CONF_METER_TYPE,
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
@@ -28,6 +29,7 @@ from .const import (
     DOMAIN,
     PHMODE_3P4W,
     PHMODE_3P3W,
+    MeterTypes,
 )
 
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient
@@ -53,6 +55,17 @@ STEP_LOGIN_DATA_SCHEMA = vol.Schema(
 
 STEP_PM_CONFIG_DATA_SCHEMA = vol.Schema(
     {vol.Required(CONF_PHASE_MODE): vol.In(["3P4W", "3P3W"])}
+)
+
+STEP_METER_TYPE_CONFIG_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_METER_TYPE): vol.In(
+            {
+                MeterTypes.METER_TYPE_H_3P: "DTSU666-H (Huawei)",
+                MeterTypes.METER_TYPE_CT_3P: "DTSU666 (Normal)",
+            }
+        )
+    }
 )
 
 CONF_MANUAL_PATH = "Enter Manually"
@@ -84,20 +97,19 @@ async def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
         clre = decoder.decode_16bit_uint()
         net = decoder.decode_16bit_uint()
 
-        rr = client.read_holding_registers(
-            address=0xB, count=1, slave=data[CONF_SLAVE_IDS][0]
-        )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.Big)
-        device_type = decoder.decode_16bit_uint()
-
         _LOGGER.info(
-            "Successfully connected to pm %s phase mode %s",
-            device_type,
+            "Successfully connected to pm phase mode %s",
             net,
         )
 
+        match data[CONF_METER_TYPE]:
+            case MeterTypes.METER_TYPE_CT_3P:
+                meter_type_name = "DTSU-666"
+            case _:
+                meter_type_name = "DTSU-666-H"
+
         result = {
-            "model_name": f"DTSU-666-H ({data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
+            "model_name": f"{meter_type_name} ({data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
             "rev": rev,
             CONF_PHASE_MODE: _resolve_ph_mode(net),
         }
@@ -130,20 +142,19 @@ async def validate_network_setup(data: dict[str, Any]) -> dict[str, Any]:
         clre = decoder.decode_16bit_uint()
         net = decoder.decode_16bit_uint()
 
-        rr = client.read_holding_registers(
-            address=0xB, count=1, slave=data[CONF_SLAVE_IDS][0]
-        )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.Big)
-        device_type = decoder.decode_16bit_uint()
-
         _LOGGER.info(
-            "Successfully connected to pm %s phase mode %s",
-            device_type,
+            "Successfully connected to pm phase mode %s",
             net,
         )
 
+        match data[CONF_METER_TYPE]:
+            case MeterTypes.METER_TYPE_CT_3P:
+                meter_type_name = "DTSU-666"
+            case _:
+                meter_type_name = "DTSU-666-H"
+
         result = {
-            "model_name": f"DTSU-666-H ({data[CONF_HOST]}:{data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
+            "model_name": f"{meter_type_name} ({data[CONF_HOST]}:{data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
             "rev": rev,
             CONF_PHASE_MODE: _resolve_ph_mode(net),
         }
@@ -172,11 +183,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._username: str | None = None
         self._password: str | None = None
         self._pm_phase_mode: str | None = None
+        self._meter_type: str | None = None
 
         # Only used in reauth flows:
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
     async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step when user initializes a integration."""
+        return await self.async_step_setup_meter_type()
+
+    async def async_step_connection_type(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Step when user initializes a integration."""
@@ -190,7 +208,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         list_of_types = ["Serial", "Network"]
 
         schema = vol.Schema({vol.Required(CONF_TYPE): vol.In(list_of_types)})
-        return self.async_show_form(step_id="user", data_schema=schema)
+        return self.async_show_form(step_id="connection_type", data_schema=schema)
 
     async def async_step_setup_serial(
         self, user_input: dict[str, Any] | None = None
@@ -390,6 +408,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="pm_settings", data_schema=STEP_PM_CONFIG_DATA_SCHEMA, errors=errors
         )
 
+    async def async_step_setup_meter_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """enter pm configs"""
+        errors = {}
+        if user_input is not None:
+            try:
+                self._meter_type = user_input[CONF_METER_TYPE]
+                return await self.async_step_connection_type()
+
+            except Exception as exception:  # pylint: disable=broad-except
+                _LOGGER.exception(exception)
+                errors["base"] = "unknown"
+        return self.async_show_form(
+            step_id="setup_meter_type",
+            data_schema=STEP_METER_TYPE_CONFIG_DATA_SCHEMA,
+            errors=errors,
+        )
+
     async def _create_entry(self):
         """Create the entry."""
         assert self._port is not None
@@ -402,6 +439,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_USERNAME: self._username,
             CONF_PASSWORD: self._password,
             CONF_PHASE_MODE: self._pm_phase_mode,
+            CONF_METER_TYPE: self._meter_type,
         }
 
         if self._reauth_entry:
