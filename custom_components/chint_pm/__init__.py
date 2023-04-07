@@ -609,3 +609,20 @@ async def _create_update_coordinator(
     await coordinator.async_config_entry_first_refresh()
 
     return coordinator
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old entry."""
+    _LOGGER.debug("Migrating from version %s", config_entry.version)
+
+    if config_entry.version < 2:
+        data = {**config_entry.data}
+
+        data[CONF_METER_TYPE] = MeterTypes.METER_TYPE_H_3P
+
+        config_entry.version = 2
+        hass.config_entries.async_update_entry(config_entry, data=data)
+
+    _LOGGER.info("Migration to version %s successful", config_entry.version)
+
+    return True
