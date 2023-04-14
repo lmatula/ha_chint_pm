@@ -237,7 +237,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_slave_ids"
             else:
                 try:
-                    info = await validate_serial_setup(user_input)
+                    info = await validate_serial_setup(
+                        {
+                            CONF_PORT: user_input[CONF_PORT],
+                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
+                            CONF_METER_TYPE: self._meter_type,
+                        }
+                    )
 
                 except SlaveException:
                     errors["base"] = "slave_cannot_connect"
@@ -307,7 +313,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_slave_ids"
             else:
                 try:
-                    info = await validate_serial_setup(user_input)
+                    info = await validate_serial_setup(
+                        {
+                            CONF_PORT: user_input[CONF_PORT],
+                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
+                            CONF_METER_TYPE: self._meter_type,
+                        }
+                    )
 
                 except SlaveException:
                     errors["base"] = "slave_cannot_connect"
@@ -360,7 +372,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_slave_ids"
             else:
                 try:
-                    info = await validate_network_setup(user_input)
+                    info = await validate_network_setup(
+                        {
+                            CONF_HOST: user_input[CONF_HOST],
+                            CONF_PORT: user_input[CONF_PORT],
+                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
+                            CONF_METER_TYPE: self._meter_type,
+                        }
+                    )
 
                 except SlaveException:
                     errors["base"] = "slave_cannot_connect"
