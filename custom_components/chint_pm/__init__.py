@@ -22,8 +22,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 import async_timeout
 
-from pymodbus.exceptions import ConnectionException
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient, ModbusBaseClient
+from pymodbus.exceptions import ConnectionException, ModbusIOException
+from pymodbus.client import (
+    AsyncModbusSerialClient,
+    AsyncModbusTcpClient,
+    ModbusBaseClient,
+)
 from pymodbus.payload import BinaryPayloadDecoder
 from pymodbus.constants import Endian
 
@@ -221,38 +225,40 @@ class ChintDxsuDevice:
             # (current) quadrant IV reactive total energy
             self.data["q4eq"] = decoder.decode_32bit_float()
 
-        if client.connect():
-            header = client.read_holding_registers(address=0x0, count=12, slave=unit_id)
-            header_proto = client.read_holding_registers(
+        if client.connected:
+            header = await client.read_holding_registers(
+                address=0x0, count=12, slave=unit_id
+            )
+            header_proto = await client.read_holding_registers(
                 address=0x2C, count=9, slave=unit_id
             )
-            elecricity_power = client.read_holding_registers(
+            elecricity_power = await client.read_holding_registers(
                 address=0x2000, count=0x22, slave=unit_id
             )
-            elecricity_factor = client.read_holding_registers(
+            elecricity_factor = await client.read_holding_registers(
                 address=0x202A, count=8, slave=unit_id
             )
-            elecricity_other = client.read_holding_registers(
+            elecricity_other = await client.read_holding_registers(
                 address=0x2044, count=8, slave=unit_id
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
-            total = client.read_holding_registers(
+            total = await client.read_holding_registers(
                 address=0x4026, count=12, slave=unit_id
             )
             # (current) quadrant I reactive total energy
-            quadrant_i = client.read_holding_registers(
+            quadrant_i = await client.read_holding_registers(
                 address=0x4032, count=2, slave=unit_id
             )
             # (current) quadrant II reactive total energy
-            quadrant_ii = client.read_holding_registers(
+            quadrant_ii = await client.read_holding_registers(
                 address=0x403C, count=2, slave=unit_id
             )
             # (current) quadrant III reactive total energy
-            quadrant_iii = client.read_holding_registers(
+            quadrant_iii = await client.read_holding_registers(
                 address=0x4046, count=2, slave=unit_id
             )
             # (current) quadrant IV reactive total energy
-            quadrant_iv = client.read_holding_registers(
+            quadrant_iv = await client.read_holding_registers(
                 address=0x4050, count=2, slave=unit_id
             )
 
@@ -406,38 +412,40 @@ class ChintDxsuDevice:
             # (current) quadrant IV reactive total energy
             self.data["q4eq"] = decoder.decode_32bit_float()
 
-        if client.connect():
-            header = client.read_holding_registers(address=0x0, count=12, slave=unit_id)
-            header_proto = client.read_holding_registers(
+        if client.connected:
+            header = await client.read_holding_registers(
+                address=0x0, count=12, slave=unit_id
+            )
+            header_proto = await client.read_holding_registers(
                 address=0x2C, count=9, slave=unit_id
             )
-            elecricity_power = client.read_holding_registers(
+            elecricity_power = await client.read_holding_registers(
                 address=0x2000, count=0x22, slave=unit_id
             )
-            elecricity_factor = client.read_holding_registers(
+            elecricity_factor = await client.read_holding_registers(
                 address=0x202A, count=8, slave=unit_id
             )
-            elecricity_other = client.read_holding_registers(
+            elecricity_other = await client.read_holding_registers(
                 address=0x2044, count=8, slave=unit_id
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
-            total = client.read_holding_registers(
+            total = await client.read_holding_registers(
                 address=0x1026, count=12, slave=unit_id
             )
             # (current) quadrant I reactive total energy
-            quadrant_i = client.read_holding_registers(
+            quadrant_i = await client.read_holding_registers(
                 address=0x1032, count=2, slave=unit_id
             )
             # (current) quadrant II reactive total energy
-            quadrant_ii = client.read_holding_registers(
+            quadrant_ii = await client.read_holding_registers(
                 address=0x103C, count=2, slave=unit_id
             )
             # (current) quadrant III reactive total energy
-            quadrant_iii = client.read_holding_registers(
+            quadrant_iii = await client.read_holding_registers(
                 address=0x1046, count=2, slave=unit_id
             )
             # (current) quadrant IV reactive total energy
-            quadrant_iv = client.read_holding_registers(
+            quadrant_iv = await client.read_holding_registers(
                 address=0x1050, count=2, slave=unit_id
             )
 
@@ -461,11 +469,11 @@ class ChintDxsuDevice:
 class ChintUpdateCoordinator(DataUpdateCoordinator):
     """A specialised DataUpdateCoordinator for chint smart meter."""
 
-    def create_client(self, port, host):
+    async def create_client(self, port, host):
         """create one clinet object whole update cordinator"""
         try:
             if host is None:
-                self._client = ModbusSerialClient(
+                self._client = AsyncModbusSerialClient(
                     port=port,
                     baudrate=9600,
                     bytesize=8,
@@ -473,7 +481,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
                     parity="N",
                 )
             else:
-                self._client = ModbusTcpClient(host=host, port=port, timeout=5)
+                self._client = AsyncModbusTcpClient(host=host, port=port, timeout=5)
 
             # self._client.connect()
         except Exception as err:
@@ -486,13 +494,21 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
-            if not self._client:
-                self._client.connect()
+            unit_id = self._entry.data[CONF_SLAVE_IDS][0]
+            if not self._client.connected:
+                await self._client.connect()
+            else:
+                # check alive
+                try:
+                    await self._client.read_holding_registers(
+                        address=0x0, count=1, slave=unit_id
+                    )
+                except ModbusIOException as merr:
+                    merr.isError()
+                    self._client.connect()
 
             async with async_timeout.timeout(20):
-                return await self.device.update(
-                    self._client, self._entry.data[CONF_SLAVE_IDS][0]
-                )
+                return await self.device.update(self._client, unit_id)
         except Exception as err:
             raise UpdateFailed(f"Could not update values: {err}") from err
 
@@ -523,7 +539,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
             request_refresh_debouncer=request_refresh_debouncer,
         )
         self.device = device
-        self._client: ModbusSerialClient | ModbusTcpClient
+        self._client: AsyncModbusSerialClient | AsyncModbusTcpClient
 
         self._entry = entry
 
@@ -543,9 +559,9 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
             model=meter_type_name,
         )
 
-    def stop(self):
+    async def stop(self):
         """Close the modbus connection"""
-        self._client.close()
+        await self._client.close()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -604,7 +620,7 @@ async def _create_update_coordinator(
         update_interval=update_interval,
     )
 
-    coordinator.create_client(entry.data[CONF_PORT], entry.data[CONF_HOST])
+    await coordinator.create_client(entry.data[CONF_PORT], entry.data[CONF_HOST])
 
     await coordinator.async_config_entry_first_refresh()
 
