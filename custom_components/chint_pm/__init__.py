@@ -75,7 +75,7 @@ class ChintDxsuDevice:
 
         async def read_header(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # REV verison
             self.data["rev"] = decoder.decode_16bit_uint()
@@ -96,7 +96,7 @@ class ChintDxsuDevice:
 
         async def read_header_proto(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # Protocol Protocol changing-over
             self.data["protocol"] = decoder.decode_16bit_uint()
@@ -120,7 +120,7 @@ class ChintDxsuDevice:
 
         async def read_elecricity_power(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
 
             # Uab Line -line voltage, the unit is V
@@ -164,7 +164,7 @@ class ChintDxsuDevice:
 
         async def read_elecricity_factor(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # PFt Conjunction power factor
             self.data["pft"] = decoder.decode_32bit_float()
@@ -177,7 +177,7 @@ class ChintDxsuDevice:
 
         async def read_elecricity_other(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # Freq Frequency
             self.data["freq"] = decoder.decode_32bit_float()
@@ -187,7 +187,7 @@ class ChintDxsuDevice:
 
         async def read_total(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
@@ -199,28 +199,28 @@ class ChintDxsuDevice:
 
         async def read_quadrant_i(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant I reactive total energy
             self.data["q1eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_ii(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant II reactive total energy
             self.data["q2eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_iii(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant III reactive total energy
             self.data["q3eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_iv(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant IV reactive total energy
             self.data["q4eq"] = decoder.decode_32bit_float()
@@ -262,28 +262,27 @@ class ChintDxsuDevice:
                 address=0x4050, count=2, slave=unit_id
             )
 
-            await asyncio.gather(
-                *[
-                    read_header(header.registers),
-                    read_header_proto(header_proto.registers),
-                    read_elecricity_power(elecricity_power.registers),
-                    read_elecricity_factor(elecricity_factor.registers),
-                    read_elecricity_other(elecricity_other.registers),
-                    read_total(total.registers),
-                    read_quadrant_i(quadrant_i.registers),
-                    read_quadrant_ii(quadrant_ii.registers),
-                    read_quadrant_iii(quadrant_iii.registers),
-                    read_quadrant_iv(quadrant_iv.registers),
-                ],
+            out = await asyncio.gather(
+                read_header(header.registers),
+                read_header_proto(header_proto.registers),
+                read_elecricity_power(elecricity_power.registers),
+                read_elecricity_factor(elecricity_factor.registers),
+                read_elecricity_other(elecricity_other.registers),
+                read_total(total.registers),
+                read_quadrant_i(quadrant_i.registers),
+                read_quadrant_ii(quadrant_ii.registers),
+                read_quadrant_iii(quadrant_iii.registers),
+                read_quadrant_iv(quadrant_iv.registers),
                 return_exceptions=True,
             )
+            # print(out)
 
     async def read_values_type_normal(self, client, unit_id):
         """read modbus value groups"""
 
         async def read_header(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # REV verison
             self.data["rev"] = decoder.decode_16bit_uint()
@@ -301,7 +300,7 @@ class ChintDxsuDevice:
 
         async def read_header_proto(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # Protocol Protocol changing-over
             self.data["protocol"] = decoder.decode_16bit_uint()
@@ -312,7 +311,7 @@ class ChintDxsuDevice:
 
         async def read_elecricity_power(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
 
             # Uab Line -line voltage, the unit is V
@@ -356,7 +355,7 @@ class ChintDxsuDevice:
 
         async def read_elecricity_factor(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # PFt Conjunction power factor
             self.data["pft"] = decoder.decode_32bit_float()
@@ -369,14 +368,14 @@ class ChintDxsuDevice:
 
         async def read_elecricity_other(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # Freq Frequency
             self.data["freq"] = decoder.decode_32bit_float()
 
         async def read_total(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
@@ -386,28 +385,28 @@ class ChintDxsuDevice:
 
         async def read_quadrant_i(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant I reactive total energy
             self.data["q1eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_ii(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant II reactive total energy
             self.data["q2eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_iii(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant III reactive total energy
             self.data["q3eq"] = decoder.decode_32bit_float()
 
         async def read_quadrant_iv(registers):
             decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.Big
+                registers, byteorder=Endian.BIG
             )
             # (current) quadrant IV reactive total energy
             self.data["q4eq"] = decoder.decode_32bit_float()
@@ -469,49 +468,6 @@ class ChintDxsuDevice:
 class ChintUpdateCoordinator(DataUpdateCoordinator):
     """A specialised DataUpdateCoordinator for chint smart meter."""
 
-    async def create_client(self, port, host):
-        """create one clinet object whole update cordinator"""
-        try:
-            if host is None:
-                self._client = AsyncModbusSerialClient(
-                    port=port,
-                    baudrate=9600,
-                    bytesize=8,
-                    stopbits=1,
-                    parity="N",
-                )
-            else:
-                self._client = AsyncModbusTcpClient(host=host, port=port, timeout=5)
-
-            # self._client.connect()
-        except Exception as err:
-            # always try to stop the bridge, as it will keep retrying
-            # in the background otherwise!
-            if self._client is not None:
-                self._client.close()
-
-            raise err
-
-    async def _async_update_data(self):
-        try:
-            unit_id = self._entry.data[CONF_SLAVE_IDS][0]
-            if not self._client.connected:
-                await self._client.connect()
-            else:
-                # check alive
-                try:
-                    await self._client.read_holding_registers(
-                        address=0x0, count=1, slave=unit_id
-                    )
-                except ModbusIOException as merr:
-                    merr.isError()
-                    self._client.connect()
-
-            async with async_timeout.timeout(20):
-                return await self.device.update(self._client, unit_id)
-        except Exception as err:
-            raise UpdateFailed(f"Could not update values: {err}") from err
-
     def __init__(
         self,
         hass: HomeAssistant,
@@ -540,8 +496,57 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
         )
         self.device = device
         self._client: AsyncModbusSerialClient | AsyncModbusTcpClient
-
+        self._unit_id = entry.data[CONF_SLAVE_IDS][0]
         self._entry = entry
+
+    async def push_sensor_read(self, address, count, data_type):
+        # TODO: push device addresses to read
+        await self._client.read_holding_registers(
+            address=address, count=count, slave=self._unit_id
+        )
+        self.device._sensors.append(1)
+
+    async def create_client(self, port, host):
+        """create one clinet object whole update cordinator"""
+        try:
+            if host is None:
+                self._client = AsyncModbusSerialClient(
+                    port=port,
+                    baudrate=9600,
+                    bytesize=8,
+                    stopbits=1,
+                    parity="N",
+                )
+            else:
+                self._client = AsyncModbusTcpClient(host=host, port=port, timeout=5)
+
+            # self._client.connect()
+        except Exception as err:
+            # always try to stop the bridge, as it will keep retrying
+            # in the background otherwise!
+            if self._client is not None:
+                self._client.close()
+
+            raise err
+
+    async def _async_update_data(self):
+        try:
+            if not self._client.connected:
+                await self._client.connect()
+            else:
+                # check alive
+                try:
+                    await self._client.read_holding_registers(
+                        address=0x0, count=1, slave=self._unit_id
+                    )
+                except ModbusIOException as merr:
+                    # merr.isError()
+                    await self._client.connect()
+
+            async with async_timeout.timeout(30):
+                return await self.device.update(self._client, self._unit_id)
+        except Exception as err:
+            raise UpdateFailed(f"Could not update values: {err}") from err
 
     @property
     def device_info(self) -> DeviceInfo:

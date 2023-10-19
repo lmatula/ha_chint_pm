@@ -45,6 +45,9 @@ class ChintPmSensorEntityDescription(SensorEntityDescription):
     """Chint PM Sensor Entity."""
 
     phase_mode_relevant: str | None = None
+    address: int | None = None
+    count: int | None = None
+    data_type: str | None = None
     value_conversion_function: Callable[[Any], str] | None = None
 
 
@@ -823,7 +826,9 @@ SENSOR_DESCRIPTIONS_TYPE_NORMAL: tuple[ChintPmSensorEntityDescription, ...] = (
 async def async_setup_entry(hass, entry, async_add_entities):
     """Add pm entry."""
 
-    update_coordinators = hass.data[DOMAIN][entry.entry_id][DATA_UPDATE_COORDINATORS]
+    update_coordinators: list[ChintUpdateCoordinator] = hass.data[DOMAIN][
+        entry.entry_id
+    ][DATA_UPDATE_COORDINATORS]
 
     entities_to_add: list[SensorEntity] = []
     for idx, (update_coordinator) in enumerate(zip_longest(update_coordinators)):
@@ -843,6 +848,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
             sensor = ChintPMModbusSensor(
                 update_coordinator[idx], entity_description, device_info
             )
+            # TODO: itt kell hozzá adnom a modbus cimeket
+            # await update_coordinator[idx].push_sensor_read(
+            #   entity_description.address,
+            #   entity_description.count,
+            #   entity_description.data_type,
+            # )
             entities_to_add.append(sensor)
 
     async_add_entities(entities_to_add, True)
@@ -869,9 +880,10 @@ class ChintPMModbusSensor(CoordinatorEntity, ChintDxsuDevice, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        value = self.coordinator.device.data[self.entity_description.key]
-        if self.entity_description.value_conversion_function:
-            value = self.entity_description.value_conversion_function(value)
+        if self.entity_description.key in self.coordinator.device.data:
+            value = self.coordinator.device.data[self.entity_description.key]
+            if self.entity_description.value_conversion_function:
+                value = self.entity_description.value_conversion_function(value)
 
-        self._attr_native_value = value
-        self.async_write_ha_state()
+            self._attr_native_value = value
+            self.async_write_ha_state()
