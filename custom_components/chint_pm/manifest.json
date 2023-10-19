@@ -1,7 +1,7 @@
 {
     "domain": "chint_pm",
     "name": "Chint powermeter DTSU-666-h",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "documentation": "https://www.gizhub.com/lmatula",
     "issue_tracker": "",
     "requirements": ["pymodbus>=3.1.3"],
