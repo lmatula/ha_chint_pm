@@ -541,7 +541,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
                     )
                 except ModbusIOException as merr:
                     # merr.isError()
-                    self._client.connect()
+                    await self._client.connect()
 
             async with async_timeout.timeout(30):
                 return await self.device.update(self._client, self._unit_id)
