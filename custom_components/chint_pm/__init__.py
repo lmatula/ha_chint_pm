@@ -26,7 +26,6 @@ from pymodbus.exceptions import ConnectionException, ModbusIOException
 from pymodbus.client import (
     AsyncModbusSerialClient,
     AsyncModbusTcpClient,
-    ModbusBaseClient,
 )
 from pymodbus.payload import BinaryPayloadDecoder
 from pymodbus.constants import Endian
