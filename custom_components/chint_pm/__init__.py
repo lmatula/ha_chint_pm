@@ -190,9 +190,11 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-            decoder.skip_bytes(
-                2 * 8
-            )  # is reading start 0x401e this line is needed, maybe smart meter "-H" version only problem? --> this line is needed! but start address is wrong in documentation
+
+        async def read_total_negative(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.BIG
+            )
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -378,7 +380,11 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-            decoder.skip_bytes(2 * 8)
+
+        async def read_total_negative(registers):
+            decoder = BinaryPayloadDecoder.fromRegisters(
+                registers, byteorder=Endian.BIG
+            )
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -428,7 +434,10 @@ class ChintDxsuDevice:
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = await client.read_holding_registers(
-                address=0x1026, count=12, slave=unit_id
+                address=0x101E, count=2, slave=unit_id
+            )
+            total_negative = await client.read_holding_registers(
+                address=0x1028, count=2, slave=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = await client.read_holding_registers(
@@ -455,6 +464,7 @@ class ChintDxsuDevice:
                     read_elecricity_factor(elecricity_factor.registers),
                     read_elecricity_other(elecricity_other.registers),
                     read_total(total.registers),
+                    read_total_negative(total_negative.registers),
                     read_quadrant_i(quadrant_i.registers),
                     read_quadrant_ii(quadrant_ii.registers),
                     read_quadrant_iii(quadrant_iii.registers),
