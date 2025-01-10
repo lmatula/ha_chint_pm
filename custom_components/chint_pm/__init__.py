@@ -190,11 +190,7 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-
-        async def read_total_negative(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
-            )
+            decoder.skip_bytes(2 * 8)  # Skip to negative energy position
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -380,11 +376,7 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder.decode_32bit_float()
-
-        async def read_total_negative(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
-            )
+            decoder.skip_bytes(2 * 8)  # Skip to negative energy position
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder.decode_32bit_float()
 
@@ -457,19 +449,16 @@ class ChintDxsuDevice:
             )
 
             await asyncio.gather(
-                *[
-                    read_header(header.registers),
-                    read_header_proto(header_proto.registers),
-                    read_elecricity_power(elecricity_power.registers),
-                    read_elecricity_factor(elecricity_factor.registers),
-                    read_elecricity_other(elecricity_other.registers),
-                    read_total(total.registers),
-                    read_total_negative(total_negative.registers),
-                    read_quadrant_i(quadrant_i.registers),
-                    read_quadrant_ii(quadrant_ii.registers),
-                    read_quadrant_iii(quadrant_iii.registers),
-                    read_quadrant_iv(quadrant_iv.registers),
-                ],
+                read_header(header.registers),
+                read_header_proto(header_proto.registers),
+                read_elecricity_power(elecricity_power.registers),
+                read_elecricity_factor(elecricity_factor.registers),
+                read_elecricity_other(elecricity_other.registers),
+                read_total(total.registers),
+                read_quadrant_i(quadrant_i.registers),
+                read_quadrant_ii(quadrant_ii.registers),
+                read_quadrant_iii(quadrant_iii.registers),
+                read_quadrant_iv(quadrant_iv.registers),
                 return_exceptions=True,
             )
 
