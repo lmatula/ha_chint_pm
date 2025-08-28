@@ -4,7 +4,7 @@
     "version": "0.0.6",
     "documentation": "https://www.github.com/lmatula",
     "issue_tracker": "",
-    "requirements": ["pymodbus>=3.6.9,<3.7"],
+    "requirements": ["pymodbus>=3.8.3"],
     "dependencies": [],
     "codeowners": ["@lmatula"],
     "config_flow": true,
