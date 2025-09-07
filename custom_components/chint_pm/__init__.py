@@ -25,8 +25,6 @@ import async_timeout
 
 from pymodbus.exceptions import ConnectionException, ModbusIOException
 from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
-from pymodbus.payload import BinaryPayloadDecoder
-from pymodbus.constants import Endian
 
 from .const import (
     CONF_SLAVE_IDS,
@@ -222,39 +220,39 @@ class ChintDxsuDevice:
 
         if client.connected:
             header = await client.read_holding_registers(
-                address=0x0, count=12, slave=unit_id
+                address=0x0, count=12, device_id=unit_id
             )
             header_proto = await client.read_holding_registers(
-                address=0x2C, count=9, slave=unit_id
+                address=0x2C, count=9, device_id=unit_id
             )
             elecricity_power = await client.read_holding_registers(
-                address=0x2000, count=0x22, slave=unit_id
+                address=0x2000, count=0x22, device_id=unit_id
             )
             elecricity_factor = await client.read_holding_registers(
-                address=0x202A, count=8, slave=unit_id
+                address=0x202A, count=8, device_id=unit_id
             )
             elecricity_other = await client.read_holding_registers(
-                address=0x2044, count=8, slave=unit_id
+                address=0x2044, count=8, device_id=unit_id
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = await client.read_holding_registers(
-                address=0x4026, count=12, slave=unit_id
+                address=0x4026, count=12, device_id=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = await client.read_holding_registers(
-                address=0x4032, count=2, slave=unit_id
+                address=0x4032, count=2, device_id=unit_id
             )
             # (current) quadrant II reactive total energy
             quadrant_ii = await client.read_holding_registers(
-                address=0x403C, count=2, slave=unit_id
+                address=0x403C, count=2, device_id=unit_id
             )
             # (current) quadrant III reactive total energy
             quadrant_iii = await client.read_holding_registers(
-                address=0x4046, count=2, slave=unit_id
+                address=0x4046, count=2, device_id=unit_id
             )
             # (current) quadrant IV reactive total energy
             quadrant_iv = await client.read_holding_registers(
-                address=0x4050, count=2, slave=unit_id
+                address=0x4050, count=2, device_id=unit_id
             )
 
             out = await asyncio.gather(
@@ -276,169 +274,171 @@ class ChintDxsuDevice:
         """read modbus value groups"""
 
         async def read_header(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # REV verison
-            self.data["rev"] = decoder.decode_16bit_uint()
+            self.data["rev"] = decoder[0]
             # UCode Programming password codE
-            self.data["ucode"] = decoder.decode_16bit_uint()
+            self.data["ucode"] = decoder[1]
             # ClrE Electric energy zero clearing CLr.E(1:zero clearing)
-            self.data["clre"] = decoder.decode_16bit_uint()
+            self.data["clre"] = decoder[2]
             # net Selecting of the connection mode net(0:3P4W,13P3W)
-            self.data["net"] = decoder.decode_16bit_uint()
+            self.data["net"] = decoder[3]
             decoder.skip_bytes(2 * 2)
             # IrAt Current Transformer Ratio
-            self.data["irat"] = decoder.decode_16bit_uint()
+            self.data["irat"] = decoder[6]
             # UrAt Potential Transformer Ratio(*)
-            self.data["urat"] = decoder.decode_16bit_uint()
+            self.data["urat"] = decoder[7]
 
         async def read_header_proto(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # Protocol Protocol changing-over
-            self.data["protocol"] = decoder.decode_16bit_uint()
+            self.data["protocol"] = decoder[0]
             # Addr Communication address Addr
-            self.data["baud"] = decoder.decode_16bit_uint()
+            self.data["baud"] = decoder[1]
             # bAud Communication baud rate bAud
-            self.data["addr"] = decoder.decode_16bit_uint()
+            self.data["addr"] = decoder[2]
 
         async def read_elecricity_power(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
 
             # Uab Line -line voltage, the unit is V
-            self.data["uab"] = decoder.decode_32bit_float()
+            self.data["uab"] = decoder[0]
             # Ubc Line -line voltage, the unit is V
-            self.data["ubc"] = decoder.decode_32bit_float()
+            self.data["ubc"] = decoder[1]
             # Uca Line -line voltage, the unit is V
-            self.data["uca"] = decoder.decode_32bit_float()
+            self.data["uca"] = decoder[2]
 
             # Ua Phase-phase voltage, the unit is V
-            self.data["ua"] = decoder.decode_32bit_float()
+            self.data["ua"] = decoder[3]
             # Ub Phase-phase voltaget, he unit is V
-            self.data["ub"] = decoder.decode_32bit_float()
+            self.data["ub"] = decoder[4]
             # Uc Phase-phase voltage, the unit is V
-            self.data["uc"] = decoder.decode_32bit_float()
+            self.data["uc"] = decoder[5]
 
             # Ia The data of three phase current,the unit is A
-            self.data["ia"] = decoder.decode_32bit_float()
+            self.data["ia"] = decoder[6]
             # Ib The data of three phase current,the unit is A
-            self.data["ib"] = decoder.decode_32bit_float()
+            self.data["ib"] = decoder[7]
             # Ic The data of three phase current,the unit is A
-            self.data["ic"] = decoder.decode_32bit_float()
+            self.data["ic"] = decoder[8]
 
             # Pt Conjunction active power，the unit is W
-            self.data["pt"] = decoder.decode_32bit_float()
+            self.data["pt"] = decoder[9]
             # Pa A phase active power，the unit is W
-            self.data["pa"] = decoder.decode_32bit_float()
+            self.data["pa"] = decoder[10]
             # Pb B phase active power，the unit is W (invalid when three phase three wire)
-            self.data["pb"] = decoder.decode_32bit_float()
+            self.data["pb"] = decoder[11]
             # Pc C phase active power，the unit is W
-            self.data["pc"] = decoder.decode_32bit_float()
+            self.data["pc"] = decoder[12]
 
             # Qt Conjunction reactive power，the unit is var
-            self.data["qt"] = decoder.decode_32bit_float()
+            self.data["qt"] = decoder[13]
             # Qa A phase reactive power， the unit is var
-            self.data["qa"] = decoder.decode_32bit_float()
+            self.data["qa"] = decoder[14]
             # Qb B phase reactive power， the unit is var (invalid when three phase three wire)
-            self.data["qb"] = decoder.decode_32bit_float()
+            self.data["qb"] = decoder[15]
             # Qc C phase reactive power， the unit is var
-            self.data["qc"] = decoder.decode_32bit_float()
+            self.data["qc"] = decoder[16]
 
         async def read_elecricity_factor(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # PFt Conjunction power factor
-            self.data["pft"] = decoder.decode_32bit_float()
+            self.data["pft"] = decoder[0]
             # Pfa A phase power factor (invalid when three phase three wire)
-            self.data["pfa"] = decoder.decode_32bit_float()
+            self.data["pfa"] = decoder[1]
             # PFb B phase power factor (invalid when three phase three wire)
-            self.data["pfb"] = decoder.decode_32bit_float()
+            self.data["pfb"] = decoder[2]
             # PFc C phase power factor (invalid when three phase three wire)
-            self.data["pfc"] = decoder.decode_32bit_float()
+            self.data["pfc"] = decoder[3]
 
         async def read_elecricity_other(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # Freq Frequency
-            self.data["freq"] = decoder.decode_32bit_float()
+            self.data["freq"] = decoder[0]
 
         async def read_total(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # ImpEp (current)positive active total energy
-            self.data["impep"] = decoder.decode_32bit_float()
+            self.data["impep"] = decoder[0]
             decoder.skip_bytes(2 * 8)  # Skip to negative energy position
             # ExpEp (current)negative active total energy
-            self.data["expep"] = decoder.decode_32bit_float()
+            self.data["expep"] = decoder[5]
 
         async def read_quadrant_i(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # (current) quadrant I reactive total energy
-            self.data["q1eq"] = decoder.decode_32bit_float()
+            self.data["q1eq"] = decoder[0]
 
         async def read_quadrant_ii(registers):
             # (current) quadrant II reactive total energy
-            self.data["q2eq"] = client.convert_from_registers(
-                registers, float, Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
+            self.data["q2eq"] = decoder[0]
 
         async def read_quadrant_iii(registers):
             # (current) quadrant III reactive total energy
-            self.data["q3eq"] = client.convert_from_registers(
-                registers, float, Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
+            self.data["q3eq"] = decoder[0]
 
         async def read_quadrant_iv(registers):
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                registers, byteorder=Endian.BIG
+            decoder = client.convert_from_registers(
+                registers, data_type=client.DATATYPE.FLOAT32
             )
             # (current) quadrant IV reactive total energy
-            self.data["q4eq"] = decoder.decode_32bit_float()
+            self.data["q4eq"] = decoder[0]
 
         if client.connected:
             header = await client.read_holding_registers(
-                address=0x0, count=12, slave=unit_id
+                address=0x0, count=12, device_id=unit_id
             )
             header_proto = await client.read_holding_registers(
-                address=0x2C, count=9, slave=unit_id
+                address=0x2C, count=9, device_id=unit_id
             )
             elecricity_power = await client.read_holding_registers(
-                address=0x2000, count=0x22, slave=unit_id
+                address=0x2000, count=0x22, device_id=unit_id
             )
             elecricity_factor = await client.read_holding_registers(
-                address=0x202A, count=8, slave=unit_id
+                address=0x202A, count=8, device_id=unit_id
             )
             elecricity_other = await client.read_holding_registers(
-                address=0x2044, count=8, slave=unit_id
+                address=0x2044, count=8, device_id=unit_id
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = await client.read_holding_registers(
-                address=0x101E, count=2, slave=unit_id
+                address=0x101E, count=2, device_id=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = await client.read_holding_registers(
-                address=0x1032, count=2, slave=unit_id
+                address=0x1032, count=2, device_id=unit_id
             )
             # (current) quadrant II reactive total energy
             quadrant_ii = await client.read_holding_registers(
-                address=0x103C, count=2, slave=unit_id
+                address=0x103C, count=2, device_id=unit_id
             )
             # (current) quadrant III reactive total energy
             quadrant_iii = await client.read_holding_registers(
-                address=0x1046, count=2, slave=unit_id
+                address=0x1046, count=2, device_id=unit_id
             )
             # (current) quadrant IV reactive total energy
             quadrant_iv = await client.read_holding_registers(
-                address=0x1050, count=2, slave=unit_id
+                address=0x1050, count=2, device_id=unit_id
             )
 
             await asyncio.gather(
@@ -493,7 +493,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
     async def push_sensor_read(self, address, count, data_type):
         # TODO: push device addresses to read
         await self._client.read_holding_registers(
-            address=address, count=count, slave=self._unit_id
+            address=address, count=count, device_id=self._unit_id
         )
         self.device._sensors.append(1)
 
@@ -528,7 +528,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
                 # check alive
                 try:
                     await self._client.read_holding_registers(
-                        address=0x0, count=1, slave=self._unit_id
+                        address=0x0, count=1, device_id=self._unit_id
                     )
                 except ModbusIOException as merr:
                     # merr.isError()
