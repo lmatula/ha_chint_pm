@@ -1,12 +1,14 @@
 """Config flow for Chint pm integration."""
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import homeassistant.helpers.config_validation as cv
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 import serial.tools.list_ports
 import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.components import usb
 from homeassistant.const import (
@@ -17,24 +19,21 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.data_entry_flow import FlowResult
+import homeassistant.helpers.config_validation as cv
 
 from .const import (
+    CONF_METER_TYPE,
     CONF_PHASE_MODE,
     CONF_SLAVE_IDS,
-    CONF_METER_TYPE,
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
     DEFAULT_USERNAME,
     DOMAIN,
-    PHMODE_3P4W,
     PHMODE_3P3W,
+    PHMODE_3P4W,
     MeterTypes,
 )
-
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient
-from pymodbus.payload import BinaryPayloadDecoder
-from pymodbus.constants import Endian
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,19 +88,23 @@ async def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
         client.connect()
 
         rr = client.read_holding_registers(
-            address=0x0, count=4, slave=data[CONF_SLAVE_IDS][0]
+            address=0x0, count=4, device_id=data[CONF_SLAVE_IDS][0]
         )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.BIG)
-        rev = decoder.decode_16bit_uint()
-        ucode = decoder.decode_16bit_uint()
-        clre = decoder.decode_16bit_uint()
-        net = decoder.decode_16bit_uint()
+        decoder = client.convert_from_registers(
+            rr.registers, data_type=client.DATATYPE.UINT16
+        )
+        rev = decoder[0]
+        ucode = decoder[1]
+        clre = decoder[2]
+        net = decoder[3]
 
         rr = client.read_holding_registers(
-            address=0xB, count=1, slave=data[CONF_SLAVE_IDS][0]
+            address=0xB, count=1, device_id=data[CONF_SLAVE_IDS][0]
         )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.BIG)
-        device_type = decoder.decode_16bit_uint()
+        decoder = client.convert_from_registers(
+            rr.registers, data_type=client.DATATYPE.UINT16
+        )
+        # device_type = decoder[0]
 
         _LOGGER.info(
             "Successfully connected to pm phase mode %s",
@@ -140,19 +143,23 @@ async def validate_network_setup(data: dict[str, Any]) -> dict[str, Any]:
         client.connect()
 
         rr = client.read_holding_registers(
-            address=0x0, count=4, slave=data[CONF_SLAVE_IDS][0]
+            address=0x0, count=4, device_id=data[CONF_SLAVE_IDS][0]
         )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.BIG)
-        rev = decoder.decode_16bit_uint()
-        ucode = decoder.decode_16bit_uint()
-        clre = decoder.decode_16bit_uint()
-        net = decoder.decode_16bit_uint()
+        decoder = client.convert_from_registers(
+            rr.registers, data_type=client.DATATYPE.UINT16
+        )
+        rev = decoder[0]
+        ucode = decoder[1]
+        clre = decoder[2]
+        net = decoder[3]
 
         rr = client.read_holding_registers(
-            address=0xB, count=1, slave=data[CONF_SLAVE_IDS][0]
+            address=0xB, count=1, device_id=data[CONF_SLAVE_IDS][0]
         )
-        decoder = BinaryPayloadDecoder.fromRegisters(rr.registers, byteorder=Endian.BIG)
-        device_type = decoder.decode_16bit_uint()
+        decoder = client.convert_from_registers(
+            rr.registers, data_type=client.DATATYPE.UINT16
+        )
+        # device_type = decoder[0]
 
         _LOGGER.info(
             "Successfully connected to pm phase mode %s",
