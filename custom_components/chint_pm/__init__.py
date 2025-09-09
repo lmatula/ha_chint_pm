@@ -414,7 +414,7 @@ class ChintDxsuDevice:
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = await client.read_holding_registers(
-                address=0x101E, count=2, device_id=unit_id
+                address=0x101E, count=12, device_id=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = await client.read_holding_registers(
