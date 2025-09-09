@@ -1,7 +1,7 @@
 {
   "domain": "chint_pm",
   "name": "Chint powermeter DTSU-666-h",
-  "version": "0.0.6",
+  "version": "0.0.9",
   "documentation": "https://www.github.com/lmatula",
   "issue_tracker": "",
   "requirements": [
