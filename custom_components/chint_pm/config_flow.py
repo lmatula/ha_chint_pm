@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import homeassistant.helpers.config_validation as cv
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 import serial.tools.list_ports
 import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.components import usb
 from homeassistant.const import (
@@ -18,22 +19,21 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.data_entry_flow import FlowResult
+import homeassistant.helpers.config_validation as cv
 
 from .const import (
+    CONF_METER_TYPE,
     CONF_PHASE_MODE,
     CONF_SLAVE_IDS,
-    CONF_METER_TYPE,
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
     DEFAULT_USERNAME,
     DOMAIN,
-    PHMODE_3P4W,
     PHMODE_3P3W,
+    PHMODE_3P4W,
     MeterTypes,
 )
-
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 
 _LOGGER = logging.getLogger(__name__)
 

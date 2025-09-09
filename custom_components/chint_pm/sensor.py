@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import zip_longest
-from typing import Any, Union
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,32 +11,28 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    PERCENTAGE,
-    UnitOfPower,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
-    UnitOfFrequency,
-    UnitOfReactivePower,
     UnitOfEnergy,
+    UnitOfFrequency,
+    UnitOfPower,
+    UnitOfReactivePower,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import ChintDxsuDevice, ChintUpdateCoordinator
 from .const import (
+    CONF_METER_TYPE,
+    CONF_PHASE_MODE,
     DATA_UPDATE_COORDINATORS,
     DOMAIN,
-    CONF_PHASE_MODE,
-    CONF_METER_TYPE,
-    PHMODE_3P4W,
     PHMODE_3P3W,
+    PHMODE_3P4W,
     MeterTypes,
 )
-
-from . import ChintDxsuDevice, ChintUpdateCoordinator
 
 
 @dataclass

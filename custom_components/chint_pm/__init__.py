@@ -1,36 +1,28 @@
 """The Chint pm  Integration."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 import logging
 import threading
-from datetime import timedelta
-from typing import TypedDict, TypeVar, Optional
+from typing import TypeVar
 
-import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
-from collections.abc import Awaitable, Callable
+# Use asyncio.timeout instead of async_timeout
+from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
+from pymodbus.exceptions import ModbusIOException
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_HOST,
-    CONF_PORT,
-    Platform,
-)
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.const import CONF_HOST, CONF_PORT, Platform
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.debounce import Debouncer
-from homeassistant.helpers.entity import DeviceInfo, Entity
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-import async_timeout
-
-from pymodbus.exceptions import ConnectionException, ModbusIOException
-from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
-
 from .const import (
-    CONF_SLAVE_IDS,
     CONF_METER_TYPE,
-    DOMAIN,
+    CONF_SLAVE_IDS,
     DATA_UPDATE_COORDINATORS,
+    DOMAIN,
     UPDATE_INTERVAL,
     MeterTypes,
 )
@@ -534,7 +526,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator):
                     # merr.isError()
                     await self._client.connect()
 
-            async with async_timeout.timeout(30):
+            async with asyncio.timeout(30):
                 return await self.device.update(self._client, self._unit_id)
         except Exception as err:
             raise UpdateFailed(f"Could not update values: {err}") from err
@@ -567,7 +559,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DATA_UPDATE_COORDINATORS
         ]
         for update_coordinator in update_coordinators:
-            update_coordinator.stop()
+            await update_coordinator.stop()
 
         hass.data[DOMAIN].pop(entry.entry_id)
 
