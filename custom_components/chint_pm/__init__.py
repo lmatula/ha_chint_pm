@@ -168,7 +168,6 @@ class ChintDxsuDevice:
             )
             # Freq Frequency
             self.data["freq"] = decoder[0]
-            # decoder.skip_bytes(2 * 4)
             # DmPt Total active power demand
             self.data["dmpt"] = decoder[3]
 
@@ -178,7 +177,6 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder[0]
-            # decoder.skip_bytes(2 * 8)  # Skip to negative energy position
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder[5]
 
@@ -364,7 +362,6 @@ class ChintDxsuDevice:
             )
             # ImpEp (current)positive active total energy
             self.data["impep"] = decoder[0]
-            decoder.skip_bytes(2 * 8)  # Skip to negative energy position
             # ExpEp (current)negative active total energy
             self.data["expep"] = decoder[5]
 
@@ -414,7 +411,7 @@ class ChintDxsuDevice:
             )
             # documentation say address is 0x401e but this register contain invalid data, maybe only -H version?
             total = await client.read_holding_registers(
-                address=0x101E, count=2, device_id=unit_id
+                address=0x101E, count=12, device_id=unit_id
             )
             # (current) quadrant I reactive total energy
             quadrant_i = await client.read_holding_registers(
@@ -559,7 +556,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DATA_UPDATE_COORDINATORS
         ]
         for update_coordinator in update_coordinators:
-            await update_coordinator.stop()
+            update_coordinator.stop()
 
         hass.data[DOMAIN].pop(entry.entry_id)
 

@@ -8,6 +8,7 @@ from typing import Any
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 import serial.tools.list_ports
 import voluptuous as vol
+import asyncio
 
 from homeassistant import config_entries
 from homeassistant.components import usb
@@ -77,7 +78,7 @@ def _resolve_ph_mode(net: int) -> str:
         return PHMODE_3P3W
 
 
-async def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
+def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the serial device that was passed by the user."""
 
     client = None
@@ -256,7 +257,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_slave_ids"
             else:
                 try:
-                    info = await validate_serial_setup(
+                    loop = asyncio.get_running_loop()
+                    info = await loop.run_in_executor(None, validate_serial_setup,
                         {
                             CONF_PORT: user_input[CONF_PORT],
                             CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
