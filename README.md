@@ -61,8 +61,14 @@ Register maps for the supported variants are in [`docs/`](docs/).
 - Config flow no longer blocks the event loop and now assigns a unique id, so the
   same meter cannot be added twice.
 - Failed register reads are logged instead of being silently discarded.
+- Relicensed from CC0-1.0 to MIT. HACS requires an OSI-approved license, and
+  CC0 is not one.
 
 ### 0.0.9
 
 - Add support for multiple types of DTSU666.
 - Fix serial connection init issue.
+
+## License
+
+[MIT](LICENSE). Released under CC0-1.0 up to and including 0.0.9.
