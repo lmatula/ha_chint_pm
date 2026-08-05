@@ -11,7 +11,11 @@ jobs:
     name: HACS Action
     runs-on: "ubuntu-latest"
     steps:
+      - uses: "actions/checkout@v5"
       - name: HACS Action
         uses: "hacs/action@main"
         with:
           category: "integration"
+          # The domain is not registered in home-assistant/brands, which is
+          # only required for integrations shipped with Home Assistant.
+          ignore: "brands"
