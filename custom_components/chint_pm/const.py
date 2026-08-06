@@ -1,6 +1,4 @@
-"""Constants for the Chint power meter integration."""
-
-from __future__ import annotations
+"""Constants for the Chint pm integration."""
 
 from datetime import timedelta
 from enum import StrEnum
