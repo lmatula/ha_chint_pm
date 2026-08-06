@@ -1,16 +1,14 @@
 {
   "domain": "chint_pm",
-  "name": "Chint powermeter DTSU-666-h",
-  "version": "0.0.9",
-  "documentation": "https://www.github.com/lmatula",
-  "issue_tracker": "",
-  "requirements": [
-    "pymodbus>=3.11.0"
-  ],
-  "dependencies": [],
-  "codeowners": [
-    "@lmatula"
-  ],
+  "name": "Chint powermeter DTSU666",
+  "codeowners": ["@lmatula"],
   "config_flow": true,
-  "iot_class": "local_polling"
+  "dependencies": ["usb"],
+  "documentation": "https://github.com/lmatula/ha_chint_pm",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/lmatula/ha_chint_pm/issues",
+  "loggers": ["pymodbus"],
+  "requirements": ["pymodbus>=3.11.1"],
+  "version": "0.1.0"
 }

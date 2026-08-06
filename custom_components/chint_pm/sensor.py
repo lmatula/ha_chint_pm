@@ -1,9 +1,9 @@
+"""Sensor platform for the Chint power meter integration."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from itertools import zip_longest
-from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -12,873 +12,371 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    EntityCategory,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfFrequency,
     UnitOfPower,
+    UnitOfReactiveEnergy,
     UnitOfReactivePower,
 )
-from homeassistant.core import callback
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import ChintDxsuDevice, ChintUpdateCoordinator
 from .const import (
     CONF_METER_TYPE,
     CONF_PHASE_MODE,
-    DATA_UPDATE_COORDINATORS,
-    DOMAIN,
     PHMODE_3P3W,
     PHMODE_3P4W,
     MeterTypes,
 )
+from .coordinator import ChintConfigEntry, ChintUpdateCoordinator
+
+PARALLEL_UPDATES = 0
 
 
-@dataclass
-class ChintPmSensorEntityDescription(SensorEntityDescription):
-    """Chint PM Sensor Entity."""
+@dataclass(frozen=True, kw_only=True)
+class ChintSensorEntityDescription(SensorEntityDescription):
+    """Describes a value read from a Chint power meter."""
 
+    # Applied to the raw register value; the non-H meter reports unscaled
+    # integers that the manual's conversion table turns into SI units.
+    value_fn: Callable[[float], float] | None = None
+    # Enable this sensor by default when the meter is wired in this mode.
     phase_mode_relevant: str | None = None
-    address: int | None = None
-    count: int | None = None
-    data_type: str | None = None
-    value_conversion_function: Callable[[Any], str] | None = None
 
 
-SENSOR_DESCRIPTIONS: tuple[ChintPmSensorEntityDescription, ...] = (
-    ChintPmSensorEntityDescription(
-        key="rev",
-        name="Version",
-        icon="mdi:package-variant",
+def _diagnostic(
+    key: str, *, value_fn: Callable[[float], float] | None = None
+) -> ChintSensorEntityDescription:
+    """Describe a meter configuration register."""
+    return ChintSensorEntityDescription(
+        key=key,
+        translation_key=key,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="ucode",
-        name="Programming password codE",
-        icon="mdi:form-textbox-password",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="clre",
-        name="Electric energy zero clearing CLr.E(1:zero clearing)",
-        icon="mdi:tune-vertical-variant",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="net",
-        name="Connection mode net",
-        icon="mdi:tune-vertical-variant",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="irat",
-        name="Current Transformer Ratio",
-        icon="mdi:information-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="urat",
-        name="Potential Transformer Ratio(*)",
-        icon="mdi:information-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: value * 0.1,
-    ),
-    ChintPmSensorEntityDescription(
-        key="meter_type",
-        name="Meter type",
-        icon="mdi:format-list-bulleted-type",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="protocol",
-        name="Protocol changing-over",
-        icon="mdi:electric-switch-closed",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="addr",
-        name="Communication address Addr",
-        icon="mdi:map-marker-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="baud",
-        name="Communication baud rate bAud",
-        icon="mdi:speedometer",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="secound",
-        name="Second",
-        icon="mdi:clock-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="minutes",
-        name="Minute",
-        icon="mdi:clock-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="hour",
-        name="Hour",
-        icon="mdi:clock-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="day",
-        name="Day",
-        icon="mdi:calendar-month-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="month",
-        name="Month",
-        icon="mdi:calendar-month-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="year",
-        name="Year",
-        icon="mdi:calendar-month-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    # electricity measurements
-    ChintPmSensorEntityDescription(
-        key="uab",
-        name="Line AB-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ubc",
-        name="Line BC-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="uca",
-        name="Line CA-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ua",
-        name="A-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ub",
-        name="B-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="uc",
-        name="C-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ia",
-        name="A phase current",
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ib",
-        name="B phase current",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ic",
-        name="C phase current",
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pt",
-        name="Conjunction active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pa",
-        name="A phase active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pb",
-        name="B phase active power",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pc",
-        name="C phase active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qt",
-        name="Conjunction reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qa",
-        name="A phase reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qb",
-        name="B phase reactive power",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qc",
-        name="C phase reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pft",
-        name="Conjunction power factor",
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfa",
-        name="A phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfb",
-        name="B phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfc",
-        name="C phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="freq",
-        name="Frequency",
-        icon="mdi:wave",
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        device_class=SensorDeviceClass.FREQUENCY,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="dmpt",
-        name="Total active power demand",
-        icon="mdi:home-lightning-bolt-outline",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="impep",
-        name="Positive active total energy",
-        icon="mdi:transmission-tower-export",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="expep",
-        name="Negative active total energy",
-        icon="mdi:transmission-tower-import",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q1eq",
-        name="Quadrant I reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q2eq",
-        name="Quadrant II reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q3eq",
-        name="Quadrant III reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q4eq",
-        name="Quadrant IV reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-)
-
-SENSOR_DESCRIPTIONS_TYPE_NORMAL: tuple[ChintPmSensorEntityDescription, ...] = (
-    ChintPmSensorEntityDescription(
-        key="rev",
-        name="Version",
-        icon="mdi:package-variant",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="ucode",
-        name="Programming password codE",
-        icon="mdi:form-textbox-password",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="clre",
-        name="Electric energy zero clearing CLr.E(1:zero clearing)",
-        icon="mdi:tune-vertical-variant",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="net",
-        name="Connection mode net",
-        icon="mdi:tune-vertical-variant",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="irat",
-        name="Current Transformer Ratio",
-        icon="mdi:information-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="urat",
-        name="Potential Transformer Ratio(*)",
-        icon="mdi:information-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: value * 0.1,
-    ),
-    ChintPmSensorEntityDescription(
-        key="protocol",
-        name="Protocol changing-over",
-        icon="mdi:electric-switch-closed",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="addr",
-        name="Communication address Addr",
-        icon="mdi:map-marker-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    ChintPmSensorEntityDescription(
-        key="baud",
-        name="Communication baud rate bAud",
-        icon="mdi:speedometer",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    # electricity measurements
-    ChintPmSensorEntityDescription(
-        key="uab",
-        name="Line AB-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ubc",
-        name="Line BC-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="uca",
-        name="Line CA-line voltage",
-        phase_mode_relevant=PHMODE_3P3W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ua",
-        name="A-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ub",
-        name="B-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="uc",
-        name="C-phase voltage",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:sine-wave",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ia",
-        name="A phase current",
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ib",
-        name="B phase current",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="ic",
-        name="C phase current",
-        icon="mdi:current-ac",
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pt",
-        name="Conjunction active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pa",
-        name="A phase active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pb",
-        name="B phase active power",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pc",
-        name="C phase active power",
-        icon="mdi:flash",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qt",
-        name="Conjunction reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qa",
-        name="A phase reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qb",
-        name="B phase reactive power",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="qc",
-        name="C phase reactive power",
-        icon="mdi:lightning-bolt-circle",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.REACTIVE_POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.1, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pft",
-        name="Conjunction power factor",
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfa",
-        name="A phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfb",
-        name="B phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="pfc",
-        name="C phase power factor",
-        phase_mode_relevant=PHMODE_3P4W,
-        icon="mdi:math-cos",
-        device_class=SensorDeviceClass.POWER_FACTOR,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value * 0.001, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="freq",
-        name="Frequency",
-        icon="mdi:wave",
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        device_class=SensorDeviceClass.FREQUENCY,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value * 0.01, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="impep",
-        name="Positive active total energy",
-        icon="mdi:transmission-tower-export",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="expep",
-        name="Negative active total energy",
-        icon="mdi:transmission-tower-import",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=True,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q1eq",
-        name="Quadrant I reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q2eq",
-        name="Quadrant II reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q3eq",
-        name="Quadrant III reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-    ChintPmSensorEntityDescription(
-        key="q4eq",
-        name="Quadrant IV reactive total energy",
-        icon="mdi:",
-        native_unit_of_measurement="kVarh",
-        device_class=None,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        entity_registry_enabled_default=False,
-        value_conversion_function=lambda value: round(value, 2),
-    ),
-)
+        value_fn=value_fn,
+    )
 
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    """Add pm entry."""
+def _measurement(
+    key: str,
+    *,
+    device_class: SensorDeviceClass,
+    unit: str | None = None,
+    scale: float = 1.0,
+    enabled: bool = True,
+    phase_mode: str | None = None,
+    state_class: SensorStateClass = SensorStateClass.MEASUREMENT,
+) -> ChintSensorEntityDescription:
+    """Describe a measured value."""
+    return ChintSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        device_class=device_class,
+        native_unit_of_measurement=unit,
+        state_class=state_class,
+        entity_registry_enabled_default=enabled,
+        phase_mode_relevant=phase_mode,
+        suggested_display_precision=2,
+        value_fn=None if scale == 1.0 else lambda value, scale=scale: value * scale,
+    )
 
-    update_coordinators: list[ChintUpdateCoordinator] = hass.data[DOMAIN][
-        entry.entry_id
-    ][DATA_UPDATE_COORDINATORS]
 
-    entities_to_add: list[SensorEntity] = []
-    for idx, (update_coordinator) in enumerate(zip_longest(update_coordinators)):
-        # device = update_coordinators[idx].device
-        device_info = update_coordinator[idx].device_info
+def _electrical_sensors(
+    *,
+    voltage: float,
+    current: float,
+    power: float,
+    power_factor: float,
+    frequency: float,
+) -> tuple[ChintSensorEntityDescription, ...]:
+    """Describe the sensors both meter variants share.
 
-        match entry.data[CONF_METER_TYPE]:
-            case MeterTypes.METER_TYPE_CT_3P:
-                used_sensor_description = SENSOR_DESCRIPTIONS_TYPE_NORMAL
-            case _:
-                used_sensor_description = SENSOR_DESCRIPTIONS
+    The arguments are the per-variant scaling factors for the raw registers.
+    """
+    return (
+        _measurement(
+            "uab",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            enabled=False,
+            phase_mode=PHMODE_3P3W,
+        ),
+        _measurement(
+            "ubc",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            enabled=False,
+            phase_mode=PHMODE_3P3W,
+        ),
+        _measurement(
+            "uca",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            enabled=False,
+            phase_mode=PHMODE_3P3W,
+        ),
+        _measurement(
+            "ua",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "ub",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "uc",
+            device_class=SensorDeviceClass.VOLTAGE,
+            unit=UnitOfElectricPotential.VOLT,
+            scale=voltage,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "ia",
+            device_class=SensorDeviceClass.CURRENT,
+            unit=UnitOfElectricCurrent.AMPERE,
+            scale=current,
+        ),
+        _measurement(
+            "ib",
+            device_class=SensorDeviceClass.CURRENT,
+            unit=UnitOfElectricCurrent.AMPERE,
+            scale=current,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "ic",
+            device_class=SensorDeviceClass.CURRENT,
+            unit=UnitOfElectricCurrent.AMPERE,
+            scale=current,
+        ),
+        _measurement(
+            "pt",
+            device_class=SensorDeviceClass.POWER,
+            unit=UnitOfPower.WATT,
+            scale=power,
+        ),
+        _measurement(
+            "pa",
+            device_class=SensorDeviceClass.POWER,
+            unit=UnitOfPower.WATT,
+            scale=power,
+        ),
+        _measurement(
+            "pb",
+            device_class=SensorDeviceClass.POWER,
+            unit=UnitOfPower.WATT,
+            scale=power,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "pc",
+            device_class=SensorDeviceClass.POWER,
+            unit=UnitOfPower.WATT,
+            scale=power,
+        ),
+        _measurement(
+            "qt",
+            device_class=SensorDeviceClass.REACTIVE_POWER,
+            unit=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+            scale=power,
+        ),
+        _measurement(
+            "qa",
+            device_class=SensorDeviceClass.REACTIVE_POWER,
+            unit=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+            scale=power,
+        ),
+        _measurement(
+            "qb",
+            device_class=SensorDeviceClass.REACTIVE_POWER,
+            unit=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+            scale=power,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "qc",
+            device_class=SensorDeviceClass.REACTIVE_POWER,
+            unit=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+            scale=power,
+        ),
+        _measurement(
+            "pft",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            scale=power_factor,
+            enabled=False,
+        ),
+        _measurement(
+            "pfa",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            scale=power_factor,
+            enabled=False,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "pfb",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            scale=power_factor,
+            enabled=False,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "pfc",
+            device_class=SensorDeviceClass.POWER_FACTOR,
+            scale=power_factor,
+            enabled=False,
+            phase_mode=PHMODE_3P4W,
+        ),
+        _measurement(
+            "freq",
+            device_class=SensorDeviceClass.FREQUENCY,
+            unit=UnitOfFrequency.HERTZ,
+            scale=frequency,
+        ),
+    )
 
-        for entity_description in used_sensor_description:
-            if entity_description.phase_mode_relevant == entry.data[CONF_PHASE_MODE]:
-                entity_description.entity_registry_enabled_default = True
 
-            sensor = ChintPMModbusSensor(
-                update_coordinator[idx], entity_description, device_info
+def _energy_sensors() -> tuple[ChintSensorEntityDescription, ...]:
+    """Describe the energy totals, which both variants report in kWh/kvarh."""
+    return (
+        _measurement(
+            "impep",
+            device_class=SensorDeviceClass.ENERGY,
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+        ),
+        _measurement(
+            "expep",
+            device_class=SensorDeviceClass.ENERGY,
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+        ),
+        *(
+            _measurement(
+                key,
+                device_class=SensorDeviceClass.REACTIVE_ENERGY,
+                unit=UnitOfReactiveEnergy.KILO_VOLT_AMPERE_REACTIVE_HOUR,
+                state_class=SensorStateClass.TOTAL_INCREASING,
+                enabled=False,
             )
-            # TODO: itt kell hozzá adnom a modbus cimeket
-            # await update_coordinator[idx].push_sensor_read(
-            #   entity_description.address,
-            #   entity_description.count,
-            #   entity_description.data_type,
-            # )
-            entities_to_add.append(sensor)
-
-    async_add_entities(entities_to_add, True)
+            for key in ("q1eq", "q2eq", "q3eq", "q4eq")
+        ),
+    )
 
 
-class ChintPMModbusSensor(CoordinatorEntity, ChintDxsuDevice, SensorEntity):
-    """power meter sensor"""
+# The -H variant reports every measurement as a ready to use float.
+SENSOR_DESCRIPTIONS_H: tuple[ChintSensorEntityDescription, ...] = (
+    _diagnostic("rev"),
+    _diagnostic("ucode"),
+    _diagnostic("clre"),
+    _diagnostic("net"),
+    _diagnostic("irat"),
+    # 1-9999 represents a ratio of 0.1-999.9.
+    _diagnostic("urat", value_fn=lambda value: value * 0.1),
+    _diagnostic("meter_type"),
+    _diagnostic("protocol"),
+    _diagnostic("addr"),
+    _diagnostic("baud"),
+    _diagnostic("secound"),
+    _diagnostic("minutes"),
+    _diagnostic("hour"),
+    _diagnostic("day"),
+    _diagnostic("month"),
+    _diagnostic("year"),
+    *_electrical_sensors(
+        voltage=1.0, current=1.0, power=1.0, power_factor=1.0, frequency=1.0
+    ),
+    _measurement("dmpt", device_class=SensorDeviceClass.POWER, unit=UnitOfPower.WATT),
+    *_energy_sensors(),
+)
+
+# The non-H variant needs the scaling from the manual's conversion table.
+SENSOR_DESCRIPTIONS_CT: tuple[ChintSensorEntityDescription, ...] = (
+    _diagnostic("rev"),
+    _diagnostic("ucode"),
+    _diagnostic("clre"),
+    _diagnostic("net"),
+    _diagnostic("irat"),
+    _diagnostic("urat", value_fn=lambda value: value * 0.1),
+    _diagnostic("protocol"),
+    _diagnostic("addr"),
+    _diagnostic("baud"),
+    *_electrical_sensors(
+        voltage=0.1, current=0.001, power=0.1, power_factor=0.001, frequency=0.01
+    ),
+    *_energy_sensors(),
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ChintConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up the power meter sensors."""
+    coordinator = entry.runtime_data
+
+    if entry.data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_CT_3P:
+        descriptions = SENSOR_DESCRIPTIONS_CT
+    else:
+        descriptions = SENSOR_DESCRIPTIONS_H
+
+    phase_mode = entry.data.get(CONF_PHASE_MODE)
+    async_add_entities(
+        ChintPowerMeterSensor(coordinator, description, phase_mode)
+        for description in descriptions
+    )
+
+
+class ChintPowerMeterSensor(CoordinatorEntity[ChintUpdateCoordinator], SensorEntity):
+    """A single value read from a Chint power meter."""
+
+    entity_description: ChintSensorEntityDescription
+    _attr_has_entity_name = True
 
     def __init__(
         self,
         coordinator: ChintUpdateCoordinator,
-        description: ChintPmSensorEntityDescription,
-        device_info,
-    ):
-        """Batched Huawei Solar Sensor Entity constructor."""
+        description: ChintSensorEntityDescription,
+        phase_mode: str | None,
+    ) -> None:
+        """Initialise the sensor."""
         super().__init__(coordinator)
-
-        self.coordinator = coordinator
         self.entity_description = description
-
-        self._attr_device_info = device_info
+        self._attr_device_info = coordinator.device_info
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        if description.phase_mode_relevant == phase_mode:
+            self._attr_entity_registry_enabled_default = True
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        if self.entity_description.key in self.coordinator.device.data:
-            value = self.coordinator.device.data[self.entity_description.key]
-            if self.entity_description.value_conversion_function:
-                value = self.entity_description.value_conversion_function(value)
+    @property
+    def available(self) -> bool:
+        """Return True when the meter reported this value."""
+        return (
+            super().available
+            and self.coordinator.data is not None
+            and self.entity_description.key in self.coordinator.data
+        )
 
-            self._attr_native_value = value
-            self.async_write_ha_state()
+    @property
+    def native_value(self) -> float | None:
+        """Return the value of the sensor."""
+        if self.coordinator.data is None:
+            return None
+        value = self.coordinator.data.get(self.entity_description.key)
+        if value is None:
+            return None
+        if self.entity_description.value_fn is not None:
+            return self.entity_description.value_fn(value)
+        return value

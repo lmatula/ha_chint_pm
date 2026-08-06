@@ -1,42 +1,76 @@
-"""Config flow for Chint pm integration."""
+"""Config flow for the Chint power meter integration."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
+from pymodbus.client.mixin import ModbusClientMixin
+from pymodbus.exceptions import ModbusException
 import serial.tools.list_ports
 import voluptuous as vol
 import asyncio
 
-from homeassistant import config_entries
 from homeassistant.components import usb
-from homeassistant.const import (
-    CONF_HOST,
-    CONF_PASSWORD,
-    CONF_PORT,
-    CONF_TYPE,
-    CONF_USERNAME,
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TYPE
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
-from homeassistant.data_entry_flow import FlowResult
-import homeassistant.helpers.config_validation as cv
 
 from .const import (
     CONF_METER_TYPE,
     CONF_PHASE_MODE,
     CONF_SLAVE_IDS,
+    CONFIG_ENTRY_VERSION,
+    CONNECTION_NETWORK,
+    CONNECTION_SERIAL,
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
-    DEFAULT_USERNAME,
     DOMAIN,
+    MODBUS_BAUDRATE,
+    MODBUS_TIMEOUT,
     PHMODE_3P3W,
     PHMODE_3P4W,
     MeterTypes,
 )
+from .coordinator import build_unique_id, meter_model
 
 _LOGGER = logging.getLogger(__name__)
+
+CONF_MANUAL_PATH = "manual_path"
+
+STEP_METER_TYPE_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_METER_TYPE): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    MeterTypes.METER_TYPE_H_3P.value,
+                    MeterTypes.METER_TYPE_CT_3P.value,
+                ],
+                translation_key="meter_type",
+                mode=SelectSelectorMode.LIST,
+            )
+        )
+    }
+)
+
+STEP_CONNECTION_TYPE_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_TYPE): SelectSelector(
+            SelectSelectorConfig(
+                options=[CONNECTION_SERIAL, CONNECTION_NETWORK],
+                translation_key="connection_type",
+                mode=SelectSelectorMode.LIST,
+            )
+        )
+    }
+)
 
 STEP_SETUP_NETWORK_DATA_SCHEMA = vol.Schema(
     {
@@ -46,206 +80,128 @@ STEP_SETUP_NETWORK_DATA_SCHEMA = vol.Schema(
     }
 )
 
-STEP_LOGIN_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_USERNAME, default=DEFAULT_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-    }
-)
 
-STEP_PM_CONFIG_DATA_SCHEMA = vol.Schema(
-    {vol.Required(CONF_PHASE_MODE): vol.In(["3P4W", "3P3W"])}
-)
-
-STEP_METER_TYPE_CONFIG_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_METER_TYPE): vol.In(
-            {
-                MeterTypes.METER_TYPE_H_3P: "DTSU666-H (Huawei)",
-                MeterTypes.METER_TYPE_CT_3P: "DTSU666 (Normal)",
-            }
-        )
-    }
-)
-
-CONF_MANUAL_PATH = "Enter Manually"
+class CannotConnect(Exception):
+    """The meter could not be reached."""
 
 
-def _resolve_ph_mode(net: int) -> str:
-    if net == 0:
-        return PHMODE_3P4W
-    else:
-        return PHMODE_3P3W
-
+class ReadError(Exception):
+    """The meter answered, but not with usable data."""
 
 def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
     """Validate the serial device that was passed by the user."""
 
-    client = None
-    try:
-        client = ModbusSerialClient(
-            port=data[CONF_PORT], baudrate=9600, bytesize=8, stopbits=1, parity="N"
-        )
-        client.connect()
-
-        rr = client.read_holding_registers(
-            address=0x0, count=4, device_id=data[CONF_SLAVE_IDS][0]
-        )
-        decoder = client.convert_from_registers(
-            rr.registers, data_type=client.DATATYPE.UINT16
-        )
-        rev = decoder[0]
-        ucode = decoder[1]
-        clre = decoder[2]
-        net = decoder[3]
-
-        rr = client.read_holding_registers(
-            address=0xB, count=1, device_id=data[CONF_SLAVE_IDS][0]
-        )
-        decoder = client.convert_from_registers(
-            rr.registers, data_type=client.DATATYPE.UINT16
-        )
-        # device_type = decoder[0]
-
-        _LOGGER.info(
-            "Successfully connected to pm phase mode %s",
-            net,
-        )
-
-        match data[CONF_METER_TYPE]:
-            case MeterTypes.METER_TYPE_CT_3P:
-                meter_type_name = "DTSU-666"
-            case _:
-                meter_type_name = "DTSU-666-H"
-
-        result = {
-            "model_name": f"{meter_type_name} ({data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
-            "rev": rev,
-            CONF_PHASE_MODE: _resolve_ph_mode(net),
-        }
-
-        # Return info that you want to store in the config entry.
-        return result
-
-    finally:
-        if client is not None:
-            # Cleanup this inverter object explicitly to prevent it from trying to maintain a modbus connection
-            client.close()
+def _resolve_phase_mode(net: int) -> str:
+    """Translate the meter's wiring register into a phase mode."""
+    return PHMODE_3P4W if net == 0 else PHMODE_3P3W
 
 
-async def validate_network_setup(data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-    Data has the keys from STEP_SETUP_NETWORK_DATA_SCHEMA with values provided by the user.
+async def _async_validate_setup(data: dict[str, Any]) -> dict[str, Any]:
+    """Connect to the meter and read back enough to confirm it is there.
+
+    Uses the async pymodbus clients so nothing blocks the event loop.
     """
+    unit_id = data[CONF_SLAVE_IDS][0]
+    client: AsyncModbusSerialClient | AsyncModbusTcpClient
+    if host := data.get(CONF_HOST):
+        client = AsyncModbusTcpClient(
+            host=host, port=data[CONF_PORT], timeout=MODBUS_TIMEOUT
+        )
+        location = f"{host}:{data[CONF_PORT]}@{unit_id}"
+    else:
+        client = AsyncModbusSerialClient(
+            port=data[CONF_PORT],
+            baudrate=MODBUS_BAUDRATE,
+            bytesize=8,
+            stopbits=1,
+            parity="N",
+            timeout=MODBUS_TIMEOUT,
+        )
+        location = f"{data[CONF_PORT]}@{unit_id}"
 
-    client = None
     try:
-        client = ModbusTcpClient(host=data[CONF_HOST], port=data[CONF_PORT], timeout=5)
-        client.connect()
+        if not await client.connect():
+            raise CannotConnect(f"Could not connect to {location}")
 
-        rr = client.read_holding_registers(
-            address=0x0, count=4, device_id=data[CONF_SLAVE_IDS][0]
+        result = await client.read_holding_registers(
+            address=0x0, count=4, device_id=unit_id
         )
-        decoder = client.convert_from_registers(
-            rr.registers, data_type=client.DATATYPE.UINT16
+        if result.isError():
+            raise ReadError(f"{location} rejected the identification read")
+
+        decoded = client.convert_from_registers(
+            result.registers, data_type=ModbusClientMixin.DATATYPE.UINT16
         )
-        rev = decoder[0]
-        ucode = decoder[1]
-        clre = decoder[2]
-        net = decoder[3]
-
-        rr = client.read_holding_registers(
-            address=0xB, count=1, device_id=data[CONF_SLAVE_IDS][0]
-        )
-        decoder = client.convert_from_registers(
-            rr.registers, data_type=client.DATATYPE.UINT16
-        )
-        # device_type = decoder[0]
-
-        _LOGGER.info(
-            "Successfully connected to pm phase mode %s",
-            net,
-        )
-
-        match data[CONF_METER_TYPE]:
-            case MeterTypes.METER_TYPE_CT_3P:
-                meter_type_name = "DTSU-666"
-            case _:
-                meter_type_name = "DTSU-666-H"
-
-        result = {
-            "model_name": f"{meter_type_name} ({data[CONF_HOST]}:{data[CONF_PORT]}@{data[CONF_SLAVE_IDS][0]})",
-            "rev": rev,
-            CONF_PHASE_MODE: _resolve_ph_mode(net),
-        }
-
-        # Return info that you want to store in the config entry.
-        return result
-
+        revision, net = decoded[0], decoded[3]
+    except ModbusException as err:
+        raise CannotConnect(f"Modbus error while talking to {location}: {err}") from err
     finally:
-        if client is not None:
-            # Cleanup this inverter object explicitly to prevent it from trying to maintain a modbus connection
-            client.close()
+        # Do not keep a connection around; the coordinator opens its own.
+        client.close()
+
+    _LOGGER.debug("Connected to meter at %s, wiring register: %s", location, net)
+
+    return {
+        "model_name": f"{meter_model(data[CONF_METER_TYPE])} ({location})",
+        "rev": revision,
+        CONF_PHASE_MODE: _resolve_phase_mode(net),
+    }
 
 
-class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for chint pm."""
+def _parse_slave_ids(raw: str) -> list[int]:
+    """Parse the comma separated Modbus unit id field."""
+    return [int(part) for part in raw.split(",")]
 
-    VERSION = 3
+
+class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for the Chint power meter."""
+
+    VERSION = CONFIG_ENTRY_VERSION
 
     def __init__(self) -> None:
-        """Initialize flow."""
-
-        self._host: str | None = None
-        self._port: str | None = None
-        self._slave_ids: list[int] | None = None
-        self._info: dict | None = None
-        self._username: str | None = None
-        self._password: str | None = None
-        self._pm_phase_mode: str | None = None
+        """Initialise the flow."""
         self._meter_type: str | None = None
-
-        # Only used in reauth flows:
-        self._reauth_entry: config_entries.ConfigEntry | None = None
+        self._data: dict[str, Any] = {}
+        self._info: dict[str, Any] = {}
+        self._slave_ids_raw: str = str(DEFAULT_SERIAL_SLAVE_ID)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step when user initializes a integration."""
-        return await self.async_step_setup_meter_type()
+    ) -> ConfigFlowResult:
+        """Ask which meter variant is being set up."""
+        if user_input is not None:
+            self._meter_type = user_input[CONF_METER_TYPE]
+            return await self.async_step_connection_type()
+
+        return self.async_show_form(
+            step_id="user", data_schema=STEP_METER_TYPE_DATA_SCHEMA
+        )
 
     async def async_step_connection_type(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Step when user initializes a integration."""
+    ) -> ConfigFlowResult:
+        """Ask whether the meter is reached over serial or over the network."""
         if user_input is not None:
-            user_selection = user_input[CONF_TYPE]
-            if user_selection == "Serial":
+            if user_input[CONF_TYPE] == CONNECTION_SERIAL:
                 return await self.async_step_setup_serial()
-
             return await self.async_step_setup_network()
 
-        list_of_types = ["Serial", "Network"]
-
-        schema = vol.Schema({vol.Required(CONF_TYPE): vol.In(list_of_types)})
-        return self.async_show_form(step_id="connection_type", data_schema=schema)
+        return self.async_show_form(
+            step_id="connection_type", data_schema=STEP_CONNECTION_TYPE_DATA_SCHEMA
+        )
 
     async def async_step_setup_serial(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handles connection parameters when using ModbusRTU."""
-
-        # Parameter configuration is always possible over serial connection
-
-        errors = {}
+    ) -> ConfigFlowResult:
+        """Handle connection parameters for Modbus RTU."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_selection = user_input[CONF_PORT]
-            if user_selection == CONF_MANUAL_PATH:
-                self._slave_ids = user_input[CONF_SLAVE_IDS]
+            self._slave_ids_raw = user_input[CONF_SLAVE_IDS]
+            if user_input[CONF_PORT] == CONF_MANUAL_PATH:
                 return await self.async_step_setup_serial_manual_path()
 
-            user_input[CONF_PORT] = await self.hass.async_add_executor_job(
+            device_path = await self.hass.async_add_executor_job(
                 usb.get_serial_by_id, user_input[CONF_PORT]
             )
 
@@ -304,126 +260,66 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             for port in ports
         }
+        list_of_ports[CONF_MANUAL_PATH] = "Enter manually"
 
-        list_of_ports[CONF_MANUAL_PATH] = CONF_MANUAL_PATH
-
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_PORT): vol.In(list_of_ports),
-                vol.Required(CONF_SLAVE_IDS, default=str(DEFAULT_SERIAL_SLAVE_ID)): str,
-            }
-        )
         return self.async_show_form(
             step_id="setup_serial",
-            data_schema=schema,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PORT): vol.In(list_of_ports),
+                    vol.Required(
+                        CONF_SLAVE_IDS, default=str(DEFAULT_SERIAL_SLAVE_ID)
+                    ): str,
+                }
+            ),
             errors=errors,
         )
 
     async def async_step_setup_serial_manual_path(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Select path manually."""
-        errors = {}
+    ) -> ConfigFlowResult:
+        """Let the user type the serial device path."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                user_input[CONF_SLAVE_IDS] = list(
-                    map(int, user_input[CONF_SLAVE_IDS].split(","))
-                )
-            except ValueError:
-                errors["base"] = "invalid_slave_ids"
-            else:
-                try:
-                    info = await validate_serial_setup(
-                        {
-                            CONF_PORT: user_input[CONF_PORT],
-                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
-                            CONF_METER_TYPE: self._meter_type,
-                        }
-                    )
+            result = await self._async_try_create_entry(
+                {
+                    CONF_PORT: user_input[CONF_PORT],
+                    CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
+                },
+                errors,
+            )
+            if result is not None:
+                return result
 
-                except SlaveException:
-                    errors["base"] = "slave_cannot_connect"
-                except Exception as exception:  # pylint: disable=broad-except
-                    _LOGGER.exception(exception)
-                    errors["base"] = "unknown"
-                else:
-                    await self.async_set_unique_id()
-                    self._abort_if_unique_id_configured(
-                        updates={
-                            CONF_HOST: None,
-                            CONF_PORT: user_input[CONF_PORT],
-                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
-                        }
-                    )
-
-                    self._port = user_input[CONF_PORT]
-                    self._slave_ids = user_input[CONF_SLAVE_IDS]
-
-                    self._info = info
-                    self.context["title_placeholders"] = {"name": info["model_name"]}
-
-                    # We can directly make the new entry
-                    return await self.async_step_pm_settings()
-                    # return await self._create_entry()
-
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_PORT): str,
-                vol.Required(CONF_SLAVE_IDS, default=self._slave_ids): str,
-            }
-        )
         return self.async_show_form(
-            step_id="setup_serial_manual_path", data_schema=schema, errors=errors
+            step_id="setup_serial_manual_path",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PORT): str,
+                    vol.Required(CONF_SLAVE_IDS, default=self._slave_ids_raw): str,
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_setup_network(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handles connection parameters when using ModbusTCP."""
-
-        errors = {}
+    ) -> ConfigFlowResult:
+        """Handle connection parameters for Modbus TCP."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                user_input[CONF_SLAVE_IDS] = list(
-                    map(int, user_input[CONF_SLAVE_IDS].split(","))
-                )
-            except ValueError:
-                errors["base"] = "invalid_slave_ids"
-            else:
-                try:
-                    info = await validate_network_setup(
-                        {
-                            CONF_HOST: user_input[CONF_HOST],
-                            CONF_PORT: user_input[CONF_PORT],
-                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
-                            CONF_METER_TYPE: self._meter_type,
-                        }
-                    )
-
-                except SlaveException:
-                    errors["base"] = "slave_cannot_connect"
-
-                    errors["base"] = "read_error"
-                except Exception as exception:  # pylint: disable=broad-except
-                    _LOGGER.exception(exception)
-                    errors["base"] = "unknown"
-                else:
-                    await self.async_set_unique_id()
-                    self._abort_if_unique_id_configured()
-
-                    self._host = user_input[CONF_HOST]
-                    self._port = user_input[CONF_PORT]
-                    self._slave_ids = user_input[CONF_SLAVE_IDS]
-
-                    self._info = info
-
-                    self.context["title_placeholders"] = {"name": info["model_name"]}
-
-                    # Otherwise, we can directly create the device entry!
-                    return await self.async_step_pm_settings()
-                    # return await self._create_entry()
+            result = await self._async_try_create_entry(
+                {
+                    CONF_HOST: user_input[CONF_HOST],
+                    CONF_PORT: user_input[CONF_PORT],
+                    CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
+                },
+                errors,
+            )
+            if result is not None:
+                return result
 
         return self.async_show_form(
             step_id="setup_network",
@@ -431,64 +327,62 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_setup_meter_type(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """enter pm configs"""
-        errors = {}
-        if user_input is not None:
-            try:
-                self._meter_type = user_input[CONF_METER_TYPE]
-                return await self.async_step_connection_type()
-
-            except Exception as exception:  # pylint: disable=broad-except
-                _LOGGER.exception(exception)
-                errors["base"] = "unknown"
-        return self.async_show_form(
-            step_id="setup_meter_type",
-            data_schema=STEP_METER_TYPE_CONFIG_DATA_SCHEMA,
-            errors=errors,
-        )
-
     async def async_step_pm_settings(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """enter pm configs"""
-        errors = {}
+    ) -> ConfigFlowResult:
+        """Confirm the wiring mode, pre-filled with what the meter reports."""
         if user_input is not None:
-            try:
-                self._pm_phase_mode = user_input[CONF_PHASE_MODE]
-                return await self._create_entry()
+            self._data[CONF_PHASE_MODE] = user_input[CONF_PHASE_MODE]
+            return self.async_create_entry(
+                title=self._info["model_name"], data=self._data
+            )
 
-            except Exception as exception:  # pylint: disable=broad-except
-                _LOGGER.exception(exception)
-                errors["base"] = "unknown"
         return self.async_show_form(
-            step_id="pm_settings", data_schema=STEP_PM_CONFIG_DATA_SCHEMA, errors=errors
+            step_id="pm_settings",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_PHASE_MODE,
+                        default=self._info.get(CONF_PHASE_MODE, PHMODE_3P4W),
+                    ): vol.In([PHMODE_3P4W, PHMODE_3P3W])
+                }
+            ),
         )
 
-    async def _create_entry(self):
-        """Create the entry."""
-        assert self._port is not None
-        assert self._slave_ids is not None
+    async def _async_try_create_entry(
+        self, connection: dict[str, Any], errors: dict[str, str]
+    ) -> ConfigFlowResult | None:
+        """Validate the connection and move on, or fill ``errors`` and stay put.
 
-        data = {
-            CONF_HOST: self._host,
-            CONF_PORT: self._port,
-            CONF_SLAVE_IDS: self._slave_ids,
-            CONF_USERNAME: self._username,
-            CONF_PASSWORD: self._password,
-            CONF_PHASE_MODE: self._pm_phase_mode,
-            CONF_METER_TYPE: self._meter_type,
-        }
+        Returns ``None`` when the form has to be shown again.
+        """
+        try:
+            connection[CONF_SLAVE_IDS] = _parse_slave_ids(connection[CONF_SLAVE_IDS])
+        except ValueError:
+            errors["base"] = "invalid_slave_ids"
+            return None
 
-        if self._reauth_entry:
-            self.hass.config_entries.async_update_entry(self._reauth_entry, data=data)
-            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
-            return self.async_abort(reason="reauth_successful")
+        data = {CONF_METER_TYPE: self._meter_type, **connection}
 
-        return self.async_create_entry(title=self._info["model_name"], data=data)
+        await self.async_set_unique_id(build_unique_id(data))
+        self._abort_if_unique_id_configured()
 
+        try:
+            info = await _async_validate_setup(data)
+        except CannotConnect as err:
+            _LOGGER.debug("Cannot connect: %s", err)
+            errors["base"] = "cannot_connect"
+            return None
+        except ReadError as err:
+            _LOGGER.debug("Read error: %s", err)
+            errors["base"] = "read_error"
+            return None
+        except Exception:
+            _LOGGER.exception("Unexpected error while setting up the meter")
+            errors["base"] = "unknown"
+            return None
 
-class SlaveException(Exception):
-    """Error while testing communication with a slave."""
+        self._data = data
+        self._info = info
+        self.context["title_placeholders"] = {"name": info["model_name"]}
+        return await self.async_step_pm_settings()

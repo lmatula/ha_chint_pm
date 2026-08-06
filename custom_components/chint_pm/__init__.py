@@ -1,31 +1,21 @@
-"""The Chint pm  Integration."""
+"""The Chint power meter integration."""
 
-import asyncio
-from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from __future__ import annotations
+
 import logging
-import threading
-from typing import TypeVar
 
-# Use asyncio.timeout instead of async_timeout
-from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusIOException
-
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT, Platform
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.debounce import Debouncer
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
     CONF_METER_TYPE,
-    CONF_SLAVE_IDS,
-    DATA_UPDATE_COORDINATORS,
+    CONF_PHASE_MODE,
+    CONFIG_ENTRY_VERSION,
     DOMAIN,
-    UPDATE_INTERVAL,
+    PHMODE_3P4W,
     MeterTypes,
 )
+from .coordinator import ChintConfigEntry, ChintUpdateCoordinator, build_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -379,12 +369,16 @@ class ChintDxsuDevice:
             )
             self.data["q2eq"] = decoder[0]
 
-        async def read_quadrant_iii(registers):
-            # (current) quadrant III reactive total energy
-            decoder = client.convert_from_registers(
-                registers, data_type=client.DATATYPE.FLOAT32
-            )
-            self.data["q3eq"] = decoder[0]
+async def async_setup_entry(hass: HomeAssistant, entry: ChintConfigEntry) -> bool:
+    """Set up a Chint power meter from a config entry."""
+    coordinator = ChintUpdateCoordinator(hass, entry)
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        # The client is created during the first refresh, so it has to be closed
+        # here as well - async_on_unload does not run for a failed setup.
+        await coordinator.async_close()
+        raise
 
         async def read_quadrant_iv(registers):
             decoder = client.convert_from_registers(
@@ -587,43 +581,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    # await async_setup_services(hass, entry, device)
     return True
 
 
-async def _create_update_coordinator(
-    hass: HomeAssistant,
-    device: ChintDxsuDevice,
-    entry: ConfigEntry,
-    update_interval,
-):
-    coordinator = ChintUpdateCoordinator(
-        hass,
-        _LOGGER,
-        device=device,
-        entry=entry,
-        update_interval=update_interval,
+async def async_unload_entry(hass: HomeAssistant, entry: ChintConfigEntry) -> bool:
+    """Unload a config entry."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ChintConfigEntry) -> bool:
+    """Migrate an old config entry."""
+    _LOGGER.debug("Migrating configuration from version %s", entry.version)
+
+    if entry.version > CONFIG_ENTRY_VERSION:
+        # Downgrading from a future version is not supported.
+        return False
+
+    data = {**entry.data}
+
+    if entry.version < CONFIG_ENTRY_VERSION:
+        # The meter type arrived with version 2; anything older could only ever
+        # talk to the -H variant.
+        data.setdefault(CONF_METER_TYPE, MeterTypes.METER_TYPE_H_3P.value)
+        data.setdefault(CONF_PHASE_MODE, PHMODE_3P4W)
+        # Never used - the meter has no authentication.
+        data.pop(CONF_USERNAME, None)
+        data.pop(CONF_PASSWORD, None)
+
+    # Entries created by earlier versions have no unique id at all, which left
+    # them without any protection against being added twice. Only claim one if
+    # it is still free, so a duplicated setup does not break the migration.
+    unique_id = entry.unique_id
+    if unique_id is None:
+        candidate = build_unique_id(data)
+        if not hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, candidate):
+            unique_id = candidate
+
+    hass.config_entries.async_update_entry(
+        entry, data=data, unique_id=unique_id, version=CONFIG_ENTRY_VERSION
     )
-
-    await coordinator.create_client(entry.data[CONF_PORT], entry.data[CONF_HOST])
-
-    await coordinator.async_config_entry_first_refresh()
-
-    return coordinator
-
-
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate old entry."""
-    _LOGGER.debug("Migrating from version %s", config_entry.version)
-
-    if config_entry.version < 2:
-        data = {**config_entry.data}
-
-        data[CONF_METER_TYPE] = MeterTypes.METER_TYPE_H_3P
-
-        config_entry.version = 2
-        hass.config_entries.async_update_entry(config_entry, data=data)
-
-    _LOGGER.info("Migration to version %s successful", config_entry.version)
-
+    _LOGGER.debug("Migration to version %s successful", entry.version)
     return True

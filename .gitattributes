@@ -1,0 +1,7 @@
+# Normalise line endings: LF in the repository and in the working tree, on every
+# platform. Without this, editing on Windows rewrites whole files as CRLF and
+# every commit shows up as a full-file diff.
+* text=auto eol=lf
+
+# Reference manuals must never be line-ending converted.
+*.pdf binary
