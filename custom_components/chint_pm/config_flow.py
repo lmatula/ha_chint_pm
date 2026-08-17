@@ -10,7 +10,6 @@ from pymodbus.client.mixin import ModbusClientMixin
 from pymodbus.exceptions import ModbusException
 import serial.tools.list_ports
 import voluptuous as vol
-import asyncio
 
 from homeassistant.components import usb
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
@@ -88,8 +87,6 @@ class CannotConnect(Exception):
 class ReadError(Exception):
     """The meter answered, but not with usable data."""
 
-def validate_serial_setup(data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the serial device that was passed by the user."""
 
 def _resolve_phase_mode(net: int) -> str:
     """Translate the meter's wiring register into a phase mode."""
@@ -204,49 +201,12 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
             device_path = await self.hass.async_add_executor_job(
                 usb.get_serial_by_id, user_input[CONF_PORT]
             )
-
-            try:
-                user_input[CONF_SLAVE_IDS] = list(
-                    map(int, user_input[CONF_SLAVE_IDS].split(","))
-                )
-            except ValueError:
-                errors["base"] = "invalid_slave_ids"
-            else:
-                try:
-                    loop = asyncio.get_running_loop()
-                    info = await loop.run_in_executor(None, validate_serial_setup,
-                        {
-                            CONF_PORT: user_input[CONF_PORT],
-                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
-                            CONF_METER_TYPE: self._meter_type,
-                        }
-                    )
-
-                except SlaveException:
-                    errors["base"] = "slave_cannot_connect"
-                except Exception as exception:  # pylint: disable=broad-except
-                    _LOGGER.exception(exception)
-                    errors["base"] = "unknown"
-                else:
-                    await self.async_set_unique_id()
-                    self._abort_if_unique_id_configured(
-                        updates={
-                            CONF_HOST: None,
-                            CONF_PORT: user_input[CONF_PORT],
-                            CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS],
-                        }
-                    )
-
-                    self._port = user_input[CONF_PORT]
-                    self._slave_ids = user_input[CONF_SLAVE_IDS]
-
-                    self._info = info
-
-                    self.context["title_placeholders"] = {"name": info["model_name"]}
-
-                    # We can directly make the new entry
-                    return await self.async_step_pm_settings()
-                    # return await self._create_entry()
+            result = await self._async_try_create_entry(
+                {CONF_PORT: device_path, CONF_SLAVE_IDS: user_input[CONF_SLAVE_IDS]},
+                errors,
+            )
+            if result is not None:
+                return result
 
         ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
         list_of_ports = {

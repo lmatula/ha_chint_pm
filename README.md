@@ -46,6 +46,16 @@ Register maps for the supported variants are in [`docs/`](docs/).
 
 ## Changelog
 
+### 0.1.1
+
+- Fixed the 0.1.0 release, which could not be imported at all. A merge conflict
+  had been resolved by keeping both sides, so `__init__.py` contained the old
+  and the new implementation stacked on top of each other while carrying only
+  the new imports. The first statement of the leftover old code,
+  `T = TypeVar("T")`, raised `NameError: name 'TypeVar' is not defined`
+  (issue #49). The same merge left a stub `validate_serial_setup` and the old
+  serial step in `config_flow.py`, which would have broken serial setup too.
+
 ### 0.1.0
 
 - Reworked for current Home Assistant: config entry `runtime_data`, a coordinator
