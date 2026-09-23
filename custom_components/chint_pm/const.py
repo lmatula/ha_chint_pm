@@ -22,7 +22,7 @@ CONNECTION_NETWORK = "network"
 
 # Default polling interval in seconds; user-configurable via the options flow.
 DEFAULT_UPDATE_INTERVAL = 15
-MIN_UPDATE_INTERVAL = 5
+MIN_UPDATE_INTERVAL = 1
 MAX_UPDATE_INTERVAL = 3600
 
 # Serial line settings the meter ships with (see the operation manual, ModBus-RTU
