@@ -12,10 +12,19 @@ import serial.tools.list_ports
 import voluptuous as vol
 
 from homeassistant.components import usb
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TYPE
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, CONF_TYPE
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -31,7 +40,10 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
+    DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
+    MAX_UPDATE_INTERVAL,
+    MIN_UPDATE_INTERVAL,
     MODBUS_BAUDRATE,
     MODBUS_TIMEOUT,
     PHMODE_3P3W,
@@ -154,6 +166,12 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for the Chint power meter."""
 
     VERSION = CONFIG_ENTRY_VERSION
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> ChintOptionsFlow:
+        """Get the options flow for this handler."""
+        return ChintOptionsFlow()
 
     def __init__(self) -> None:
         """Initialise the flow."""
@@ -346,3 +364,36 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
         self._info = info
         self.context["title_placeholders"] = {"name": info["model_name"]}
         return await self.async_step_pm_settings()
+
+
+class ChintOptionsFlow(OptionsFlow):
+    """Handle options for the Chint power meter, i.e. the update interval."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the update interval."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=self.config_entry.options.get(
+                            CONF_SCAN_INTERVAL, DEFAULT_UPDATE_INTERVAL
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_UPDATE_INTERVAL,
+                            max=MAX_UPDATE_INTERVAL,
+                            step=1,
+                            unit_of_measurement="s",
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    )
+                }
+            ),
+        )

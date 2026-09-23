@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 import logging
 from typing import Any
 
@@ -13,7 +14,7 @@ from pymodbus.client.mixin import ModbusClientMixin
 from pymodbus.exceptions import ModbusException
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -21,11 +22,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONF_METER_TYPE,
     CONF_SLAVE_IDS,
+    DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MODBUS_BAUDRATE,
     MODBUS_TIMEOUT,
     READ_TIMEOUT,
-    UPDATE_INTERVAL,
     MeterTypes,
 )
 
@@ -159,7 +160,9 @@ class ChintUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             config_entry=entry,
             name=f"{DOMAIN} {entry.unique_id or entry.entry_id}",
-            update_interval=UPDATE_INTERVAL,
+            update_interval=timedelta(
+                seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+            ),
         )
         self._client: AsyncModbusSerialClient | AsyncModbusTcpClient | None = None
         self._unit_id: int = entry.data[CONF_SLAVE_IDS][0]
