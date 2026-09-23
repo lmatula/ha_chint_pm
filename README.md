@@ -46,6 +46,11 @@ Register maps for the supported variants are in [`docs/`](docs/).
 
 ## Changelog
 
+### 0.2.0
+
+- The Modbus poll interval is now configurable per meter (**Settings → Devices
+  & services → Chint → Configure**) instead of being fixed at 15 seconds.
+
 ### 0.1.1
 
 - Fixed the 0.1.0 release, which could not be imported at all. A merge conflict
