@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from enum import StrEnum
 
 DOMAIN = "chint_pm"
@@ -21,7 +20,10 @@ CONF_METER_TYPE = "meter_type"
 CONNECTION_SERIAL = "serial"
 CONNECTION_NETWORK = "network"
 
-UPDATE_INTERVAL = timedelta(seconds=15)
+# Default polling interval in seconds; user-configurable via the options flow.
+DEFAULT_UPDATE_INTERVAL = 15
+MIN_UPDATE_INTERVAL = 1
+MAX_UPDATE_INTERVAL = 3600
 
 # Serial line settings the meter ships with (see the operation manual, ModBus-RTU
 # is 9600 8N1 by default).
