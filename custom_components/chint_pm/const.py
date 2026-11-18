@@ -50,5 +50,16 @@ class MeterTypes(StrEnum):
 
     METER_TYPE_H_3P = "1"
     METER_TYPE_CT_3P = "2"
-    # Dual channel DTSU666-20 (Sungrow), see docs/DTSU666-20_register_map.md.
+    # Dual channel DTSU666-20 with the Chint register map (manual
+    # ZTW0.464.0054), see docs/DTSU666-20_register_map.md.
     METER_TYPE_20_3P = "3"
+    # DTSU666-20 read through the register map Sungrow gave out (0x1100 and
+    # 0x1200, scaled integers), see docs/DTSU666-20_register_map.md.
+    METER_TYPE_20_SUNGROW_3P = "4"
+
+
+# Meter types that ship with Modbus address 1 instead of 11.
+METER_TYPES_ADDRESS_1 = (
+    MeterTypes.METER_TYPE_20_3P,
+    MeterTypes.METER_TYPE_20_SUNGROW_3P,
+)

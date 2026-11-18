@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
     DEFAULT_SLAVE_ID_20,
+    METER_TYPES_ADDRESS_1,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MAX_UPDATE_INTERVAL,
@@ -66,6 +67,7 @@ STEP_METER_TYPE_DATA_SCHEMA = vol.Schema(
                     MeterTypes.METER_TYPE_H_3P.value,
                     MeterTypes.METER_TYPE_CT_3P.value,
                     MeterTypes.METER_TYPE_20_3P.value,
+                    MeterTypes.METER_TYPE_20_SUNGROW_3P.value,
                 ],
                 translation_key="meter_type",
                 mode=SelectSelectorMode.LIST,
@@ -89,7 +91,7 @@ STEP_CONNECTION_TYPE_DATA_SCHEMA = vol.Schema(
 
 def _default_slave_id(meter_type: str | None) -> int:
     """Return the Modbus address the meter type ships with."""
-    if meter_type == MeterTypes.METER_TYPE_20_3P:
+    if meter_type in METER_TYPES_ADDRESS_1:
         return DEFAULT_SLAVE_ID_20
     return DEFAULT_SLAVE_ID
 
@@ -147,18 +149,28 @@ async def _async_validate_setup(data: dict[str, Any]) -> dict[str, Any]:
         if not await client.connect():
             raise CannotConnect(f"Could not connect to {location}")
 
-        # Firmware revision (0x0000) and wiring mode (0x0003), read one by one:
-        # the DTSU666-20 manual does not document 0x0002, so a block read
-        # spanning it may be rejected.
-        identification = []
-        for address in (0x0000, 0x0003):
+        if data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+            # The Sungrow register map documents no configuration registers,
+            # so check that the measurement block answers and assume 3P4W.
             result = await client.read_holding_registers(
-                address=address, count=1, device_id=unit_id
+                address=0x1100, count=2, device_id=unit_id
             )
             if result.isError():
                 raise ReadError(f"{location} rejected the identification read")
-            identification.append(result.registers[0])
-        revision, net = identification
+            revision, net = None, 0
+        else:
+            # Firmware revision (0x0000) and wiring mode (0x0003), read one by
+            # one: the DTSU666-20 manual does not document 0x0002, so a block
+            # read spanning it may be rejected.
+            identification = []
+            for address in (0x0000, 0x0003):
+                result = await client.read_holding_registers(
+                    address=address, count=1, device_id=unit_id
+                )
+                if result.isError():
+                    raise ReadError(f"{location} rejected the identification read")
+                identification.append(result.registers[0])
+            revision, net = identification
 
         channels = 1
         if data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_20_3P:

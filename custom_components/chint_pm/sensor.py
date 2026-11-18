@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     EntityCategory,
+    UnitOfApparentPower,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -376,6 +377,59 @@ SENSOR_DESCRIPTIONS_20_SECOND_CHANNEL = _second_channel(
 )
 
 
+# DTSU666-20 with the Sungrow register map: raw W/var/VA, V x 0.1, A x 0.01,
+# power factor x 0.001, Hz x 0.01, energy x 0.01 kWh/kvarh.
+SENSOR_DESCRIPTIONS_20_SUNGROW: tuple[ChintSensorEntityDescription, ...] = (
+    *_electrical_sensors(
+        voltage=0.1, current=0.01, power=1.0, power_factor=0.001, frequency=0.01
+    ),
+    *(
+        _measurement(
+            key,
+            device_class=SensorDeviceClass.APPARENT_POWER,
+            unit=UnitOfApparentPower.VOLT_AMPERE,
+            enabled=False,
+        )
+        for key in ("st", "sa", "sb", "sc")
+    ),
+    _measurement(
+        "impep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    _measurement(
+        "expep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    # Sungrow calls it "current total electricity"; whether that is the sum of
+    # import and export or something else is not documented.
+    _measurement(
+        "totep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        enabled=False,
+    ),
+    *(
+        _measurement(
+            key,
+            device_class=SensorDeviceClass.REACTIVE_ENERGY,
+            unit=UnitOfReactiveEnergy.KILO_VOLT_AMPERE_REACTIVE_HOUR,
+            scale=0.01,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            enabled=False,
+        )
+        for key in ("toteq", "impeq", "expeq")
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ChintConfigEntry,
@@ -392,6 +446,8 @@ async def async_setup_entry(
         descriptions = SENSOR_DESCRIPTIONS_20
         if entry.options.get(CONF_SECOND_CHANNEL, False):
             descriptions = (*descriptions, *SENSOR_DESCRIPTIONS_20_SECOND_CHANNEL)
+    elif meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+        descriptions = SENSOR_DESCRIPTIONS_20_SUNGROW
     else:
         descriptions = SENSOR_DESCRIPTIONS_H
 

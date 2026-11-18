@@ -7,7 +7,8 @@ Supported variants:
 
 - **DTSU666-H** (the meter shipped with Huawei inverters)
 - **DTSU666 / DTSU666-CT**
-- **DTSU666-20** (the dual channel meter shipped with Sungrow inverters)
+- **DTSU666-20** (the dual channel meter shipped with Sungrow inverters), with
+  either the Chint or the Sungrow register map
 
 Requires Home Assistant 2025.6 or newer.
 
@@ -50,7 +51,22 @@ one set of voltage inputs. Its factory serial settings are address 1, 9600 bps,
   are diagnostic sensors.
 - Measurements come from the 0x3000 block, which reports SI units directly.
 
-Register map and sources: [`docs/DTSU666-20_register_map.md`](docs/DTSU666-20_register_map.md).
+There are two meter types for it, because two different register maps exist
+and it is not known which one a given meter answers:
+
+- **DTSU666-20, Chint register map (dual channel)**: the map from Chint's
+  manual ZTW0.464.0054, described above.
+- **DTSU666-20, Sungrow register map**: the 0x1100/0x1200 map Sungrow gave
+  out, as published in
+  [RafAustralia/Chint-DTSU666-20-modbus](https://github.com/RafAustralia/Chint-DTSU666-20-modbus).
+  It has a single current channel, adds apparent power and reactive energy
+  totals, and has no configuration registers, so no diagnostic sensors and the
+  wiring mode defaults to 3P4W. Setup checks that 0x1100 answers.
+
+If setup fails with "The meter answered, but the reply could not be read",
+try the other type.
+
+Register maps and sources: [`docs/DTSU666-20_register_map.md`](docs/DTSU666-20_register_map.md).
 
 ## Notes
 
@@ -66,6 +82,12 @@ Register map and sources: [`docs/DTSU666-20_register_map.md`](docs/DTSU666-20_re
 Register maps for the supported variants are in [`docs/`](docs/).
 
 ## Changelog
+
+### 0.4.0
+
+- New meter type **DTSU666-20, Sungrow register map** (0x1100/0x1200 scaled
+  integers, from RafAustralia/Chint-DTSU666-20-modbus), next to the existing
+  Chint register map type.
 
 ### 0.3.0
 

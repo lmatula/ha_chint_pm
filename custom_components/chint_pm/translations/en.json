@@ -81,7 +81,8 @@
       "options": {
         "1": "DTSU666-H (Huawei)",
         "2": "DTSU666 / DTSU666-CT",
-        "3": "DTSU666-20 (Sungrow, dual channel)"
+        "3": "DTSU666-20, Chint register map (dual channel)",
+        "4": "DTSU666-20, Sungrow register map"
       }
     },
     "connection_type": {
@@ -137,6 +138,14 @@
       "dmpt": { "name": "Total active power demand" },
       "impep": { "name": "Imported active energy" },
       "expep": { "name": "Exported active energy" },
+      "st": { "name": "Total apparent power" },
+      "sa": { "name": "Phase A apparent power" },
+      "sb": { "name": "Phase B apparent power" },
+      "sc": { "name": "Phase C apparent power" },
+      "totep": { "name": "Total active energy" },
+      "toteq": { "name": "Total reactive energy" },
+      "impeq": { "name": "Imported reactive energy" },
+      "expeq": { "name": "Exported reactive energy" },
       "q1eq": { "name": "Quadrant I reactive energy" },
       "q2eq": { "name": "Quadrant II reactive energy" },
       "q3eq": { "name": "Quadrant III reactive energy" },

@@ -212,6 +212,55 @@ def register_groups_20(second_channel: bool) -> tuple[RegisterGroup, ...]:
     return groups
 
 
+# DTSU666-20 with the Sungrow register map, taken from
+# https://github.com/RafAustralia/Chint-DTSU666-20-modbus (registers Sungrow
+# handed out, verified on a meter). Scaled 32-bit integers, high word first.
+# Voltages, currents and apparent power are unsigned, the rest signed; INT32
+# decodes both correctly since the unsigned values stay far below 2^31.
+REGISTER_GROUPS_20_SUNGROW: tuple[RegisterGroup, ...] = (
+    RegisterGroup(
+        0x1100,
+        0x32,
+        _TYPE.INT32,
+        {
+            0: "uab",
+            1: "ubc",
+            2: "uca",
+            3: "ua",
+            4: "ub",
+            5: "uc",
+            6: "ia",
+            7: "ib",
+            8: "ic",
+            9: "pt",
+            10: "pa",
+            11: "pb",
+            12: "pc",
+            13: "qt",
+            14: "qa",
+            15: "qb",
+            16: "qc",
+            17: "st",
+            18: "sa",
+            19: "sb",
+            20: "sc",
+            21: "pft",
+            22: "pfa",
+            23: "pfb",
+            24: "pfc",
+        },
+    ),
+    RegisterGroup(0x1144, 2, _TYPE.UINT32, {0: "freq"}),
+    # Total, forward and reverse active energy, then the same for reactive.
+    RegisterGroup(
+        0x1200,
+        12,
+        _TYPE.UINT32,
+        {0: "totep", 1: "impep", 2: "expep", 3: "toteq", 4: "impeq", 5: "expeq"},
+    ),
+)
+
+
 def _serial_number(data: Mapping[str, Any]) -> str | None:
     """Assemble the DTSU666-20 serial number from its three registers."""
     try:
@@ -234,6 +283,8 @@ def meter_model(meter_type: str) -> str:
         return "DTSU666"
     if meter_type == MeterTypes.METER_TYPE_20_3P:
         return "DTSU666-20"
+    if meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+        return "DTSU666-20 (Sungrow)"
     return "DTSU666-H"
 
 
@@ -263,6 +314,8 @@ class ChintUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._groups = register_groups_20(
                 entry.options.get(CONF_SECOND_CHANNEL, False)
             )
+        elif meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+            self._groups = REGISTER_GROUPS_20_SUNGROW
         else:
             self._groups = REGISTER_GROUPS_H
 

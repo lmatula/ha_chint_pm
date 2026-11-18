@@ -80,3 +80,31 @@ so those sensors are created disabled.
 0x2000-0x2044 (channel 1) and 0x2800-0x2830 (channel 2) repeat the
 measurements in the scaled DTSU666 format (x 0.1 V, x 0.001 A, x 0.1 W, ...).
 The manual marks them "not recommended".
+
+## Sungrow register map (meter type "DTSU666-20, Sungrow register map")
+
+A second, unrelated map that Sungrow handed out for the DTSU666-20, published
+and verified on a meter (connected through a Logger1000) at
+<https://github.com/RafAustralia/Chint-DTSU666-20-modbus>. Whether a given
+meter answers this map, the Chint one above, or both is not known; pick the
+meter type whose registers answer.
+
+32-bit integers, high word first. Only one current channel is covered, and
+no configuration registers are known.
+
+| Address        | Values                                        | Type   | Scale          |
+|----------------|-----------------------------------------------|--------|----------------|
+| 0x1100-0x1104  | Uab, Ubc, Uca                                 | uint32 | x 0.1 V        |
+| 0x1106-0x110A  | Ua, Ub, Uc                                    | uint32 | x 0.1 V        |
+| 0x110C-0x1110  | Ia, Ib, Ic                                    | uint32 | x 0.01 A       |
+| 0x1112-0x1118  | Pt, Pa, Pb, Pc                                | int32  | W              |
+| 0x111A-0x1120  | Qt, Qa, Qb, Qc                                | int32  | var            |
+| 0x1122-0x1128  | St, Sa, Sb, Sc (apparent power)               | uint32 | VA             |
+| 0x112A-0x1130  | PFt, PFa, PFb, PFc                            | int32  | x 0.001        |
+| 0x1144         | Frequency                                     | uint32 | x 0.01 Hz      |
+| 0x1200         | Total active energy ("current total electricity") | uint32 | x 0.01 kWh |
+| 0x1202         | Forward (imported) active energy              | uint32 | x 0.01 kWh     |
+| 0x1204         | Reverse (exported) active energy              | uint32 | x 0.01 kWh     |
+| 0x1206-0x120A  | Total, forward, reverse reactive energy       | uint32 | x 0.01 kvarh   |
+
+The integration reads 0x1100 (50 registers), 0x1144 (2) and 0x1200 (12).
