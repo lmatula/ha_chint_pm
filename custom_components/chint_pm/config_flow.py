@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
-from pymodbus.client.mixin import ModbusClientMixin
 from pymodbus.exceptions import ModbusException
 import serial.tools.list_ports
 import voluptuous as vol
@@ -22,6 +21,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, CONF_T
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -33,6 +33,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_METER_TYPE,
     CONF_PHASE_MODE,
+    CONF_SECOND_CHANNEL,
     CONF_SLAVE_IDS,
     CONFIG_ENTRY_VERSION,
     CONNECTION_NETWORK,
@@ -40,6 +41,7 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_SERIAL_SLAVE_ID,
     DEFAULT_SLAVE_ID,
+    DEFAULT_SLAVE_ID_20,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     MAX_UPDATE_INTERVAL,
@@ -63,6 +65,7 @@ STEP_METER_TYPE_DATA_SCHEMA = vol.Schema(
                 options=[
                     MeterTypes.METER_TYPE_H_3P.value,
                     MeterTypes.METER_TYPE_CT_3P.value,
+                    MeterTypes.METER_TYPE_20_3P.value,
                 ],
                 translation_key="meter_type",
                 mode=SelectSelectorMode.LIST,
@@ -83,13 +86,25 @@ STEP_CONNECTION_TYPE_DATA_SCHEMA = vol.Schema(
     }
 )
 
-STEP_SETUP_NETWORK_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): cv.port,
-        vol.Required(CONF_SLAVE_IDS, default=str(DEFAULT_SLAVE_ID)): str,
-    }
-)
+
+def _default_slave_id(meter_type: str | None) -> int:
+    """Return the Modbus address the meter type ships with."""
+    if meter_type == MeterTypes.METER_TYPE_20_3P:
+        return DEFAULT_SLAVE_ID_20
+    return DEFAULT_SLAVE_ID
+
+
+def _network_schema(meter_type: str | None) -> vol.Schema:
+    """Build the Modbus TCP form, pre-filled with the type's default address."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST): str,
+            vol.Required(CONF_PORT, default=DEFAULT_PORT): cv.port,
+            vol.Required(
+                CONF_SLAVE_IDS, default=str(_default_slave_id(meter_type))
+            ): str,
+        }
+    )
 
 
 class CannotConnect(Exception):
@@ -132,16 +147,22 @@ async def _async_validate_setup(data: dict[str, Any]) -> dict[str, Any]:
         if not await client.connect():
             raise CannotConnect(f"Could not connect to {location}")
 
-        result = await client.read_holding_registers(
-            address=0x0, count=4, device_id=unit_id
-        )
-        if result.isError():
-            raise ReadError(f"{location} rejected the identification read")
+        # Firmware revision (0x0000) and wiring mode (0x0003), read one by one:
+        # the DTSU666-20 manual does not document 0x0002, so a block read
+        # spanning it may be rejected.
+        identification = []
+        for address in (0x0000, 0x0003):
+            result = await client.read_holding_registers(
+                address=address, count=1, device_id=unit_id
+            )
+            if result.isError():
+                raise ReadError(f"{location} rejected the identification read")
+            identification.append(result.registers[0])
+        revision, net = identification
 
-        decoded = client.convert_from_registers(
-            result.registers, data_type=ModbusClientMixin.DATATYPE.UINT16
-        )
-        revision, net = decoded[0], decoded[3]
+        channels = 1
+        if data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_20_3P:
+            channels = await _async_read_channel_count(client, unit_id)
     except ModbusException as err:
         raise CannotConnect(f"Modbus error while talking to {location}: {err}") from err
     finally:
@@ -153,8 +174,30 @@ async def _async_validate_setup(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "model_name": f"{meter_model(data[CONF_METER_TYPE])} ({location})",
         "rev": revision,
+        "channels": channels,
         CONF_PHASE_MODE: _resolve_phase_mode(net),
     }
+
+
+async def _async_read_channel_count(
+    client: AsyncModbusSerialClient | AsyncModbusTcpClient, unit_id: int
+) -> int:
+    """Read how many current channels a DTSU666-20 has.
+
+    The device identification code at 0x002B is 0x03CS: C is the number of
+    channels, S the CT size (7 = 100 A, 8 = 250 A). Falls back to one channel
+    if the meter does not answer or reports something unexpected.
+    """
+    result = await client.read_holding_registers(
+        address=0x002B, count=1, device_id=unit_id
+    )
+    if result.isError():
+        _LOGGER.debug("Meter did not report its device identification code")
+        return 1
+    device_id = result.registers[0]
+    _LOGGER.debug("Device identification code 0x%04X", device_id)
+    channels = (device_id >> 4) & 0xF
+    return channels if channels in (1, 2) else 1
 
 
 def _parse_slave_ids(raw: str) -> list[int]:
@@ -179,6 +222,7 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
         self._data: dict[str, Any] = {}
         self._info: dict[str, Any] = {}
         self._slave_ids_raw: str = str(DEFAULT_SERIAL_SLAVE_ID)
+        self._options: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -186,6 +230,7 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask which meter variant is being set up."""
         if user_input is not None:
             self._meter_type = user_input[CONF_METER_TYPE]
+            self._slave_ids_raw = str(_default_slave_id(self._meter_type))
             return await self.async_step_connection_type()
 
         return self.async_show_form(
@@ -245,9 +290,7 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_PORT): vol.In(list_of_ports),
-                    vol.Required(
-                        CONF_SLAVE_IDS, default=str(DEFAULT_SERIAL_SLAVE_ID)
-                    ): str,
+                    vol.Required(CONF_SLAVE_IDS, default=self._slave_ids_raw): str,
                 }
             ),
             errors=errors,
@@ -301,7 +344,7 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="setup_network",
-            data_schema=STEP_SETUP_NETWORK_DATA_SCHEMA,
+            data_schema=_network_schema(self._meter_type),
             errors=errors,
         )
 
@@ -311,20 +354,28 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
         """Confirm the wiring mode, pre-filled with what the meter reports."""
         if user_input is not None:
             self._data[CONF_PHASE_MODE] = user_input[CONF_PHASE_MODE]
+            if CONF_SECOND_CHANNEL in user_input:
+                self._options[CONF_SECOND_CHANNEL] = user_input[CONF_SECOND_CHANNEL]
             return self.async_create_entry(
-                title=self._info["model_name"], data=self._data
+                title=self._info["model_name"], data=self._data, options=self._options
             )
 
+        schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_PHASE_MODE,
+                default=self._info.get(CONF_PHASE_MODE, PHMODE_3P4W),
+            ): vol.In([PHMODE_3P4W, PHMODE_3P3W])
+        }
+        if self._meter_type == MeterTypes.METER_TYPE_20_3P:
+            # Pre-filled with what the device identification code reports.
+            schema[
+                vol.Required(
+                    CONF_SECOND_CHANNEL, default=self._info.get("channels", 1) == 2
+                )
+            ] = BooleanSelector()
+
         return self.async_show_form(
-            step_id="pm_settings",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_PHASE_MODE,
-                        default=self._info.get(CONF_PHASE_MODE, PHMODE_3P4W),
-                    ): vol.In([PHMODE_3P4W, PHMODE_3P3W])
-                }
-            ),
+            step_id="pm_settings", data_schema=vol.Schema(schema)
         )
 
     async def _async_try_create_entry(
@@ -367,33 +418,40 @@ class ChintConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ChintOptionsFlow(OptionsFlow):
-    """Handle options for the Chint power meter, i.e. the update interval."""
+    """Handle options for the Chint power meter.
+
+    The update interval, and on the DTSU666-20 whether to read the second
+    current channel.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the update interval."""
+        """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_SCAN_INTERVAL,
-                        default=self.config_entry.options.get(
-                            CONF_SCAN_INTERVAL, DEFAULT_UPDATE_INTERVAL
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=MIN_UPDATE_INTERVAL,
-                            max=MAX_UPDATE_INTERVAL,
-                            step=1,
-                            unit_of_measurement="s",
-                            mode=NumberSelectorMode.BOX,
-                        )
-                    )
-                }
-            ),
-        )
+        options = self.config_entry.options
+        schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_SCAN_INTERVAL,
+                default=options.get(CONF_SCAN_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_UPDATE_INTERVAL,
+                    max=MAX_UPDATE_INTERVAL,
+                    step=1,
+                    unit_of_measurement="s",
+                    mode=NumberSelectorMode.BOX,
+                )
+            )
+        }
+        if self.config_entry.data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_20_3P:
+            schema[
+                vol.Required(
+                    CONF_SECOND_CHANNEL,
+                    default=options.get(CONF_SECOND_CHANNEL, False),
+                )
+            ] = BooleanSelector()
+
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

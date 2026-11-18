@@ -47,7 +47,11 @@
         "title": "Wiring mode",
         "description": "Pre-filled with the wiring mode reported by the meter.",
         "data": {
-          "phase_mode": "Phase mode"
+          "phase_mode": "Phase mode",
+          "second_channel": "Read the second current channel (CT2)"
+        },
+        "data_description": {
+          "second_channel": "DTSU666-20 only. Pre-filled from the meter's device identification code."
         }
       }
     },
@@ -66,7 +70,8 @@
       "init": {
         "title": "Update interval",
         "data": {
-          "scan_interval": "Update interval (seconds)"
+          "scan_interval": "Update interval (seconds)",
+          "second_channel": "Read the second current channel (CT2, DTSU666-20 only)"
         }
       }
     }
@@ -75,7 +80,8 @@
     "meter_type": {
       "options": {
         "1": "DTSU666-H (Huawei)",
-        "2": "DTSU666 / DTSU666-CT"
+        "2": "DTSU666 / DTSU666-CT",
+        "3": "DTSU666-20 (Sungrow, dual channel)"
       }
     },
     "connection_type": {
@@ -92,6 +98,9 @@
       "clre": { "name": "Energy zero clearing" },
       "net": { "name": "Connection mode" },
       "irat": { "name": "Current transformer ratio" },
+      "ct_type": { "name": "Current transformer type" },
+      "eset": { "name": "Total energy calculation method" },
+      "device_id": { "name": "Device identification code" },
       "urat": { "name": "Voltage transformer ratio" },
       "meter_type": { "name": "Meter type" },
       "protocol": { "name": "Protocol selection" },
@@ -131,7 +140,35 @@
       "q1eq": { "name": "Quadrant I reactive energy" },
       "q2eq": { "name": "Quadrant II reactive energy" },
       "q3eq": { "name": "Quadrant III reactive energy" },
-      "q4eq": { "name": "Quadrant IV reactive energy" }
+      "q4eq": { "name": "Quadrant IV reactive energy" },
+      "uab_2": { "name": "Channel 2 line AB voltage" },
+      "ubc_2": { "name": "Channel 2 line BC voltage" },
+      "uca_2": { "name": "Channel 2 line CA voltage" },
+      "ua_2": { "name": "Channel 2 phase A voltage" },
+      "ub_2": { "name": "Channel 2 phase B voltage" },
+      "uc_2": { "name": "Channel 2 phase C voltage" },
+      "ia_2": { "name": "Channel 2 phase A current" },
+      "ib_2": { "name": "Channel 2 phase B current" },
+      "ic_2": { "name": "Channel 2 phase C current" },
+      "pt_2": { "name": "Channel 2 total active power" },
+      "pa_2": { "name": "Channel 2 phase A active power" },
+      "pb_2": { "name": "Channel 2 phase B active power" },
+      "pc_2": { "name": "Channel 2 phase C active power" },
+      "qt_2": { "name": "Channel 2 total reactive power" },
+      "qa_2": { "name": "Channel 2 phase A reactive power" },
+      "qb_2": { "name": "Channel 2 phase B reactive power" },
+      "qc_2": { "name": "Channel 2 phase C reactive power" },
+      "pft_2": { "name": "Channel 2 total power factor" },
+      "pfa_2": { "name": "Channel 2 phase A power factor" },
+      "pfb_2": { "name": "Channel 2 phase B power factor" },
+      "pfc_2": { "name": "Channel 2 phase C power factor" },
+      "freq_2": { "name": "Channel 2 frequency" },
+      "impep_2": { "name": "Channel 2 imported active energy" },
+      "expep_2": { "name": "Channel 2 exported active energy" },
+      "q1eq_2": { "name": "Channel 2 quadrant I reactive energy" },
+      "q2eq_2": { "name": "Channel 2 quadrant II reactive energy" },
+      "q3eq_2": { "name": "Channel 2 quadrant III reactive energy" },
+      "q4eq_2": { "name": "Channel 2 quadrant IV reactive energy" }
     }
   }
 }

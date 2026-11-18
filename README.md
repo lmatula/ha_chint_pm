@@ -7,6 +7,7 @@ Supported variants:
 
 - **DTSU666-H** (the meter shipped with Huawei inverters)
 - **DTSU666 / DTSU666-CT**
+- **DTSU666-20** (the dual channel meter shipped with Sungrow inverters)
 
 Requires Home Assistant 2025.6 or newer.
 
@@ -17,7 +18,7 @@ install it, restart Home Assistant, then add the integration from
 **Settings → Devices & services → Add integration → Chint powermeter DTSU666**.
 
 The setup asks for the meter variant, the connection type, the port or host, and
-the Modbus unit id (11 by default). The wiring mode (3P4W or 3P3W) is read from
+the Modbus unit id (11 by default, 1 for the DTSU666-20). The wiring mode (3P4W or 3P3W) is read from
 the meter and offered as the default on the last step.
 
 ## Sensors
@@ -30,6 +31,26 @@ disabled diagnostic entities; enable the ones you need.
 
 Line-to-line voltages are enabled automatically when the meter reports 3P3W
 wiring, phase voltages when it reports 3P4W.
+
+## DTSU666-20
+
+The DTSU666-20 measures two independent sets of currents (CT1 and CT2) against
+one set of voltage inputs. Its factory serial settings are address 1, 9600 bps,
+8N1.
+
+- Channel 1 uses the same sensor names as the other variants, so dashboards
+  and energy settings carry over.
+- Channel 2 sensors (prefixed "Channel 2") are created only when **Read the
+  second current channel** is on. The last setup step pre-fills it from the
+  meter's device identification code (0x002B), and it can be changed later
+  under **Configure**. Channel 2 voltages and frequency are duplicates of
+  channel 1 and are created disabled.
+- The serial number is read from the meter and shown on the device page. The
+  CT model setting (1-8, see the manual) and the device identification code
+  are diagnostic sensors.
+- Measurements come from the 0x3000 block, which reports SI units directly.
+
+Register map and sources: [`docs/DTSU666-20_register_map.md`](docs/DTSU666-20_register_map.md).
 
 ## Notes
 
@@ -45,6 +66,16 @@ wiring, phase voltages when it reports 3P4W.
 Register maps for the supported variants are in [`docs/`](docs/).
 
 ## Changelog
+
+### 0.3.0
+
+- Added support for the dual channel DTSU666-20 (Sungrow): both current
+  channels, energy totals per channel, serial number, CT model and device
+  identification code. Register map in `docs/DTSU666-20_register_map.md`.
+- The Modbus unit id field now defaults to the selected meter type's factory
+  address.
+- The config flow reads the firmware revision and wiring mode as two single
+  register reads instead of one block read across the undocumented 0x0002.
 
 ### 0.2.0
 

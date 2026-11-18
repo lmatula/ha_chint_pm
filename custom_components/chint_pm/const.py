@@ -12,10 +12,15 @@ CONFIG_ENTRY_VERSION = 4
 DEFAULT_PORT = 502
 DEFAULT_SLAVE_ID = 11
 DEFAULT_SERIAL_SLAVE_ID = 11
+# The DTSU666-20 (sold by Sungrow) ships with Modbus address 1.
+DEFAULT_SLAVE_ID_20 = 1
 
 CONF_SLAVE_IDS = "slave_ids"
 CONF_PHASE_MODE = "phase_mode"
 CONF_METER_TYPE = "meter_type"
+# DTSU666-20 only: also poll the second current channel (CT2). Kept in the
+# config entry options so it can be changed after setup.
+CONF_SECOND_CHANNEL = "second_channel"
 
 CONNECTION_SERIAL = "serial"
 CONNECTION_NETWORK = "network"
@@ -45,3 +50,5 @@ class MeterTypes(StrEnum):
 
     METER_TYPE_H_3P = "1"
     METER_TYPE_CT_3P = "2"
+    # Dual channel DTSU666-20 (Sungrow), see docs/DTSU666-20_register_map.md.
+    METER_TYPE_20_3P = "3"
