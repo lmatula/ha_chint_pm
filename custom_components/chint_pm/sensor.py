@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     EntityCategory,
+    UnitOfApparentPower,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -28,6 +29,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     CONF_METER_TYPE,
     CONF_PHASE_MODE,
+    CONF_SECOND_CHANNEL,
     PHMODE_3P3W,
     PHMODE_3P4W,
     MeterTypes,
@@ -43,13 +45,13 @@ class ChintSensorEntityDescription(SensorEntityDescription):
 
     # Applied to the raw register value; the non-H meter reports unscaled
     # integers that the manual's conversion table turns into SI units.
-    value_fn: Callable[[float], float] | None = None
+    value_fn: Callable[[float], float | str] | None = None
     # Enable this sensor by default when the meter is wired in this mode.
     phase_mode_relevant: str | None = None
 
 
 def _diagnostic(
-    key: str, *, value_fn: Callable[[float], float] | None = None
+    key: str, *, value_fn: Callable[[float], float | str] | None = None
 ) -> ChintSensorEntityDescription:
     """Describe a meter configuration register."""
     return ChintSensorEntityDescription(
@@ -320,6 +322,114 @@ SENSOR_DESCRIPTIONS_CT: tuple[ChintSensorEntityDescription, ...] = (
 )
 
 
+# Values the DTSU666-20 measures once for both channels: they share the voltage
+# inputs. The second channel's copies are created disabled.
+_SHARED_BETWEEN_CHANNELS = {"uab", "ubc", "uca", "ua", "ub", "uc", "freq"}
+
+
+def _second_channel(
+    descriptions: tuple[ChintSensorEntityDescription, ...],
+) -> tuple[ChintSensorEntityDescription, ...]:
+    """Derive the DTSU666-20 second channel sensors from the first channel's."""
+    second: list[ChintSensorEntityDescription] = []
+    for description in descriptions:
+        key = f"{description.key}_2"
+        if description.key in _SHARED_BETWEEN_CHANNELS:
+            second.append(
+                replace(
+                    description,
+                    key=key,
+                    translation_key=key,
+                    entity_registry_enabled_default=False,
+                    phase_mode_relevant=None,
+                )
+            )
+        else:
+            second.append(replace(description, key=key, translation_key=key))
+    return tuple(second)
+
+
+# The DTSU666-20 "recommended" registers already hold SI units.
+_ELECTRICAL_SENSORS_20 = _electrical_sensors(
+    voltage=1.0, current=1.0, power=1.0, power_factor=1.0, frequency=1.0
+)
+_ENERGY_SENSORS_20 = _energy_sensors()
+
+SENSOR_DESCRIPTIONS_20: tuple[ChintSensorEntityDescription, ...] = (
+    _diagnostic("rev"),
+    _diagnostic("ucode"),
+    _diagnostic("net"),
+    _diagnostic("eset"),
+    # 1-8 selects the CT model (CT01 100 A/333 mV ... RS04 4000 A/333 mV).
+    _diagnostic("ct_type"),
+    _diagnostic("urat", value_fn=lambda value: value * 0.1),
+    # 0x03CS: C channels, S CT size (7 = 100 A, 8 = 250 A).
+    _diagnostic("device_id", value_fn=lambda value: f"0x{int(value):04X}"),
+    _diagnostic("protocol"),
+    _diagnostic("addr"),
+    _diagnostic("baud"),
+    *_ELECTRICAL_SENSORS_20,
+    *_ENERGY_SENSORS_20,
+)
+
+SENSOR_DESCRIPTIONS_20_SECOND_CHANNEL = _second_channel(
+    (*_ELECTRICAL_SENSORS_20, *_ENERGY_SENSORS_20)
+)
+
+
+# DTSU666-20 with the Sungrow register map: raw W/var/VA, V x 0.1, A x 0.01,
+# power factor x 0.001, Hz x 0.01, energy x 0.01 kWh/kvarh.
+SENSOR_DESCRIPTIONS_20_SUNGROW: tuple[ChintSensorEntityDescription, ...] = (
+    *_electrical_sensors(
+        voltage=0.1, current=0.01, power=1.0, power_factor=0.001, frequency=0.01
+    ),
+    *(
+        _measurement(
+            key,
+            device_class=SensorDeviceClass.APPARENT_POWER,
+            unit=UnitOfApparentPower.VOLT_AMPERE,
+            enabled=False,
+        )
+        for key in ("st", "sa", "sb", "sc")
+    ),
+    _measurement(
+        "impep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    _measurement(
+        "expep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    # Sungrow calls it "current total electricity"; whether that is the sum of
+    # import and export or something else is not documented.
+    _measurement(
+        "totep",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        scale=0.01,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        enabled=False,
+    ),
+    *(
+        _measurement(
+            key,
+            device_class=SensorDeviceClass.REACTIVE_ENERGY,
+            unit=UnitOfReactiveEnergy.KILO_VOLT_AMPERE_REACTIVE_HOUR,
+            scale=0.01,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            enabled=False,
+        )
+        for key in ("toteq", "impeq", "expeq")
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ChintConfigEntry,
@@ -328,8 +438,16 @@ async def async_setup_entry(
     """Set up the power meter sensors."""
     coordinator = entry.runtime_data
 
-    if entry.data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_CT_3P:
+    meter_type = entry.data[CONF_METER_TYPE]
+    descriptions: tuple[ChintSensorEntityDescription, ...]
+    if meter_type == MeterTypes.METER_TYPE_CT_3P:
         descriptions = SENSOR_DESCRIPTIONS_CT
+    elif meter_type == MeterTypes.METER_TYPE_20_3P:
+        descriptions = SENSOR_DESCRIPTIONS_20
+        if entry.options.get(CONF_SECOND_CHANNEL, False):
+            descriptions = (*descriptions, *SENSOR_DESCRIPTIONS_20_SECOND_CHANNEL)
+    elif meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+        descriptions = SENSOR_DESCRIPTIONS_20_SUNGROW
     else:
         descriptions = SENSOR_DESCRIPTIONS_H
 
@@ -370,7 +488,7 @@ class ChintPowerMeterSensor(CoordinatorEntity[ChintUpdateCoordinator], SensorEnt
         )
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | str | None:
         """Return the value of the sensor."""
         if self.coordinator.data is None:
             return None

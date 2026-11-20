@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     CONF_METER_TYPE,
+    CONF_SECOND_CHANNEL,
     CONF_SLAVE_IDS,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -132,6 +133,141 @@ REGISTER_GROUPS_CT: tuple[RegisterGroup, ...] = (
     RegisterGroup(0x1050, 2, _TYPE.FLOAT32, {0: "q4eq"}),
 )
 
+# DTSU666-20, the dual channel meter (two sets of CTs sharing one set of voltage
+# inputs). Register map from the Chint manual ZTW0.464.0054, see
+# docs/DTSU666-20_register_map.md. The keyboard parameters are read in small
+# blocks because the manual leaves gaps (0x0002, 0x0004, 0x0008-0x0009,
+# 0x002F-0x0034) undocumented.
+_CONFIG_GROUPS_20: tuple[RegisterGroup, ...] = (
+    RegisterGroup(0x0000, 2, _TYPE.INT16, {0: "rev", 1: "ucode"}),
+    RegisterGroup(0x0003, 1, _TYPE.INT16, {0: "net"}),
+    RegisterGroup(0x0005, 3, _TYPE.INT16, {0: "eset", 1: "ct_type", 2: "urat"}),
+    RegisterGroup(
+        0x002B, 4, _TYPE.INT16, {0: "device_id", 1: "protocol", 2: "baud", 3: "addr"}
+    ),
+    # Serial number, four decimal digits per register: last, middle, first.
+    RegisterGroup(0x0035, 3, _TYPE.INT16, {0: "sn_l", 1: "sn_m", 2: "sn_f"}),
+)
+
+# The "recommended" 0x3000 block holds both channels in SI units, interleaved
+# per quantity (Uab1 Ubc1 Uca1 Uab2 Ubc2 Uca2 Ua1 ...). 0x3044-0x3052 (St1..Sc2)
+# is skipped: the manual labels it power factor although the power factors
+# proper follow at 0x3054, so its meaning is unclear.
+_ELECTRICAL_KEYS_20: dict[int, str] = {}
+for _offset, _name in enumerate(("uab", "ubc", "uca", "ua", "ub", "uc", "ia", "ib", "ic")):
+    _ELECTRICAL_KEYS_20[(_offset // 3) * 6 + _offset % 3] = _name
+    _ELECTRICAL_KEYS_20[(_offset // 3) * 6 + _offset % 3 + 3] = f"{_name}_2"
+for _offset, _name in enumerate(("pt", "pa", "pb", "pc", "qt", "qa", "qb", "qc")):
+    _ELECTRICAL_KEYS_20[18 + (_offset // 4) * 8 + _offset % 4] = _name
+    _ELECTRICAL_KEYS_20[18 + (_offset // 4) * 8 + _offset % 4 + 4] = f"{_name}_2"
+
+# 0x3054 Pf1 PFa1 PFb1 PFc1, 0x305C Pf2 ..., 0x3064 six phase angles,
+# 0x3070 Ft1, 0x3072 Ft2.
+_POWER_FACTOR_KEYS_20 = {
+    0: "pft",
+    1: "pfa",
+    2: "pfb",
+    3: "pfc",
+    4: "pft_2",
+    5: "pfa_2",
+    6: "pfb_2",
+    7: "pfc_2",
+    14: "freq",
+    15: "freq_2",
+}
+
+_ELECTRICAL_GROUPS_20: tuple[RegisterGroup, ...] = (
+    RegisterGroup(0x3000, 0x44, _TYPE.FLOAT32, _ELECTRICAL_KEYS_20),
+    RegisterGroup(0x3054, 0x20, _TYPE.FLOAT32, _POWER_FACTOR_KEYS_20),
+)
+
+
+def _energy_groups_20(base: int, suffix: str) -> tuple[RegisterGroup, ...]:
+    """Energy totals of one channel; 0x101E for the first, 0x181E the second."""
+    return (
+        # ImpEp, ImpEpA-C, NetImpEp, ExpEp (index 5), ExpEpA-C, NetExpEp.
+        RegisterGroup(
+            base, 12, _TYPE.FLOAT32, {0: f"impep{suffix}", 5: f"expep{suffix}"}
+        ),
+        RegisterGroup(base + 0x14, 2, _TYPE.FLOAT32, {0: f"q1eq{suffix}"}),
+        RegisterGroup(base + 0x1E, 2, _TYPE.FLOAT32, {0: f"q2eq{suffix}"}),
+        RegisterGroup(base + 0x28, 2, _TYPE.FLOAT32, {0: f"q3eq{suffix}"}),
+        RegisterGroup(base + 0x32, 2, _TYPE.FLOAT32, {0: f"q4eq{suffix}"}),
+    )
+
+
+def register_groups_20(second_channel: bool) -> tuple[RegisterGroup, ...]:
+    """Return the blocks to poll on a DTSU666-20.
+
+    The second channel's power and voltage values arrive in the same block as
+    the first one's anyway, so only its energy totals are worth skipping.
+    """
+    groups = (
+        *_CONFIG_GROUPS_20,
+        *_ELECTRICAL_GROUPS_20,
+        *_energy_groups_20(0x101E, ""),
+    )
+    if second_channel:
+        groups = (*groups, *_energy_groups_20(0x181E, "_2"))
+    return groups
+
+
+# DTSU666-20 with the Sungrow register map, taken from
+# https://github.com/RafAustralia/Chint-DTSU666-20-modbus (registers Sungrow
+# handed out, verified on a meter). Scaled 32-bit integers, high word first.
+# Voltages, currents and apparent power are unsigned, the rest signed; INT32
+# decodes both correctly since the unsigned values stay far below 2^31.
+REGISTER_GROUPS_20_SUNGROW: tuple[RegisterGroup, ...] = (
+    RegisterGroup(
+        0x1100,
+        0x32,
+        _TYPE.INT32,
+        {
+            0: "uab",
+            1: "ubc",
+            2: "uca",
+            3: "ua",
+            4: "ub",
+            5: "uc",
+            6: "ia",
+            7: "ib",
+            8: "ic",
+            9: "pt",
+            10: "pa",
+            11: "pb",
+            12: "pc",
+            13: "qt",
+            14: "qa",
+            15: "qb",
+            16: "qc",
+            17: "st",
+            18: "sa",
+            19: "sb",
+            20: "sc",
+            21: "pft",
+            22: "pfa",
+            23: "pfb",
+            24: "pfc",
+        },
+    ),
+    RegisterGroup(0x1144, 2, _TYPE.UINT32, {0: "freq"}),
+    # Total, forward and reverse active energy, then the same for reactive.
+    RegisterGroup(
+        0x1200,
+        12,
+        _TYPE.UINT32,
+        {0: "totep", 1: "impep", 2: "expep", 3: "toteq", 4: "impeq", 5: "expeq"},
+    ),
+)
+
+
+def _serial_number(data: Mapping[str, Any]) -> str | None:
+    """Assemble the DTSU666-20 serial number from its three registers."""
+    try:
+        return f"{data['sn_f']:04d}{data['sn_m']:04d}{data['sn_l']:04d}"
+    except KeyError:
+        return None
+
 
 def build_unique_id(data: Mapping[str, Any]) -> str:
     """Return a stable unique id for the meter described by ``data``."""
@@ -145,6 +281,10 @@ def meter_model(meter_type: str) -> str:
     """Return the marketing name of a meter type."""
     if meter_type == MeterTypes.METER_TYPE_CT_3P:
         return "DTSU666"
+    if meter_type == MeterTypes.METER_TYPE_20_3P:
+        return "DTSU666-20"
+    if meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+        return "DTSU666-20 (Sungrow)"
     return "DTSU666-H"
 
 
@@ -167,8 +307,15 @@ class ChintUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._client: AsyncModbusSerialClient | AsyncModbusTcpClient | None = None
         self._unit_id: int = entry.data[CONF_SLAVE_IDS][0]
         self._model = meter_model(entry.data[CONF_METER_TYPE])
-        if entry.data[CONF_METER_TYPE] == MeterTypes.METER_TYPE_CT_3P:
+        meter_type = entry.data[CONF_METER_TYPE]
+        if meter_type == MeterTypes.METER_TYPE_CT_3P:
             self._groups = REGISTER_GROUPS_CT
+        elif meter_type == MeterTypes.METER_TYPE_20_3P:
+            self._groups = register_groups_20(
+                entry.options.get(CONF_SECOND_CHANNEL, False)
+            )
+        elif meter_type == MeterTypes.METER_TYPE_20_SUNGROW_3P:
+            self._groups = REGISTER_GROUPS_20_SUNGROW
         else:
             self._groups = REGISTER_GROUPS_H
 
@@ -180,6 +327,7 @@ class ChintUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=self.config_entry.title,
             manufacturer="Chint",
             model=self._model,
+            serial_number=_serial_number(self.data) if self.data else None,
         )
 
     async def _async_setup(self) -> None:
